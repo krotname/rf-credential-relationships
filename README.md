@@ -1,60 +1,23 @@
-# Сборщик правил доменов РФ для Vaultwarden
+# Правила российских доменов для Vaultwarden
 
-Установка и запуск из PowerShell:
+[Готовый TXT](data/vaultwarden-equivalent-domains.txt) содержит проверенные пользовательские группы эквивалентных доменов. Одна строка — одна группа для «Настройки → Правила домена».
+
+## Полный прогон
 
 ```powershell
 git clone https://github.com/krotname/rf-vaultwarden-domain-rules.git
 Set-Location .\rf-vaultwarden-domain-rules
-.\run-rf-scan.ps1 -Limit 5000
-Get-Content .\out\vaultwarden-equivalent-domains.txt | Set-Clipboard
+.\run-rf-scan.ps1 -Source majestic -Limit 1000000 -Concurrency 100 -MaxDiscovered 100000
+npm test
 ```
 
-Вставлять нужно по одной строке через «Настройки → Правила домена → Новый пользовательский домен». Основной файл содержит только пользовательские группы, которых целиком ещё нет в глобальных правилах Bitwarden.
+Результаты и возобновляемый кэш создаются в игнорируемом каталоге `out/`. Все параметры доступны через `node collect-rf-equivalent-domains.mjs --help`.
 
-`-Limit 5000` означает ровно 5000 доменов и не более 5000 HTTPS-запросов. Дополнительную взаимную проверку доменов вне топа включайте явно: `-MaxDiscovered 500`. Глубокая проверка `www` тоже включается отдельно: `-CheckWww`.
+## Критерии включения
 
-При стандартном запуске связи с доменами вне исходного топа остаются в `evidence.json` как односторонние и не попадают в готовые правила.
+- Веб-домены связываются только при взаимных `delegate_permission/common.get_login_creds` на точных базовых доменах.
+- Android-пакет требует опубликованный сайтом SHA-256 отпечаток сертификата.
+- Поддоменные расширения и prerelease/debug/test-пакеты исключаются.
+- Группы, уже покрытые глобальными правилами Bitwarden, не дублируются.
 
-## Что считается доказательством
-
-- Рейтинг даёт только список сайтов для проверки и сам по себе ничего не связывает.
-- Веб-домены объединяются лишь при взаимных `delegate_permission/common.get_login_creds` в живых `/.well-known/assetlinks.json`.
-- Связи только на уровне поддомена исключаются: Vaultwarden принимает базовые домены, а расширять разрешение на весь домен небезопасно.
-- Android-пакет включается по опубликованному HTTPS-сайтом объявлению с SHA-256 отпечатком сертификата приложения.
-- Пакеты с `debug`, `beta`, `test`, `qa`, `stage`, `demo` и похожими маркерами отбрасываются.
-- Официальные списки Bitwarden и Apple используются для сверки; направленные миграции Apple `from/to` не превращаются в симметричные правила.
-
-## Источники рейтинга
-
-Без токена, по умолчанию — Majestic Million с фильтром `.ru`, `.su`, `.рф`:
-
-```powershell
-.\run-rf-scan.ps1 -Source majestic -Limit 10000
-```
-
-Географический топ Cloudflare Radar для России:
-
-```powershell
-$env:CLOUDFLARE_API_TOKEN = '<токен с User Details Read>'
-.\run-rf-scan.ps1 -Source cloudflare -Limit 5000
-```
-
-Свой TXT/CSV/JSON со столбцом `domain`:
-
-```powershell
-.\run-rf-scan.ps1 -Source file -InputFile "C:\путь\domains.csv" -Limit 5000
-```
-
-## Результаты
-
-- `data/vaultwarden-equivalent-domains.txt` — опубликованный проверенный снимок для топ‑5000.
-- `out/vaultwarden-equivalent-domains.txt` — строки для ручной вставки.
-- `out/vaultwarden-equivalent-domains.json` — те же группы в JSON.
-- `out/evidence.json` — источники, взаимные связи, отклонённые пакеты и статистика.
-- `out/assetlinks-cache.json` — кэш для быстрого продолжения; `-Refresh` перепроверяет сеть.
-
-Скрипт ничего не меняет в Vaultwarden и не хранит токены. Cloudflare-токен читается только из указанной переменной окружения.
-
-## Опубликованный снимок
-
-Текущий снимок получен 4 сентября 2026 года: 5000 доменов Majestic Million и 78 связанных origins, 29 готовых групп. Локальные кэши и токены в репозиторий не входят.
+Снимок от 5 сентября 2026 года: весь доступный Majestic Million — 29 926 доменов `.ru`, `.su`, `.рф` и 79 связанных origins; 30 005 проверок, 54 группы, 230 элементов.

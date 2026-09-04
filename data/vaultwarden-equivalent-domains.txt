@@ -27,3 +27,28 @@ dom.ru, androidapp://com.ertelecom.agent
 avtocod.ru, androidapp://ru.avtocod
 joom.ru, androidapp://com.joom, androidapp://tech.jm
 loveplanet.ru, androidapp://ru.loveplanet.app, androidapp://ru.loveplanet.global.app
+au.ru, androidapp://ru.au24.kmpapp.android
+kinoteatr.ru, androidapp://ru.explosion.kinoteatr.kinoteatr
+redkassa.ru, androidapp://com.RedKassa
+avilon.ru, androidapp://ru.avilon.twa
+netprint.ru, androidapp://com.photoholding.android.mobile.v3
+zhivika.ru, androidapp://ru.mobile.jivika
+spaces.ru, androidapp://com.mtgroup.app.spcs
+shtrafy-gibdd.ru, androidapp://org.policefines.finesNotCommercial
+zarina.ru, androidapp://ru.livetyping.zarina
+tiande.ru, androidapp://com.tiandeapp
+connect.ru, androidapp://com.buhphone.web
+xfit.ru, androidapp://com.itrack.xfit
+pharmeconom.ru, androidapp://ru.pharmeconom.app
+greenmoney.ru, androidapp://ru.greenmoney
+studwork.ru, androidapp://com.studwork.app
+hollyshop.ru, androidapp://com.hollyshop.app
+planetavto.ru, androidapp://ru.planet.avto
+tourvisor.ru, androidapp://ru.tourvisor.app
+dengisrazy.ru, androidapp://ru.dc
+mixit.ru, androidapp://ru.mixit.app
+beepopcorn.ru, androidapp://com.spbtv.rosing
+gazprombonus.ru, androidapp://ru.ogon.app
+td32.ru, androidapp://ru.stroilon.stroilon
+examer.ru, androidapp://ru.examer.app
+foodband.ru, androidapp://ru.foodband
