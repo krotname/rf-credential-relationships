@@ -1,0 +1,29 @@
+yandex.ru, ya.ru, androidapp://com.yandex.aliceapp, androidapp://com.yandex.bank, androidapp://com.yandex.browser, androidapp://com.yandex.huawei.alice, androidapp://com.yandex.rhythm, androidapp://com.yandex.searchapp, androidapp://com.yandex.yango, androidapp://com.yandex.yazeka, androidapp://ru.beru.android, androidapp://ru.foodfox.client, androidapp://ru.kinopoisk, androidapp://ru.plus.bookmate, androidapp://ru.yandex.auth.client, androidapp://ru.yandex.cloud, androidapp://ru.yandex.disk, androidapp://ru.yandex.key, androidapp://ru.yandex.mail, androidapp://ru.yandex.music, androidapp://ru.yandex.searchplugin, androidapp://ru.yandex.taxi, androidapp://ru.yandex.taximeter, androidapp://ru.yandex.telemost, androidapp://ru.yandex.yandexmaps, androidapp://ru.yandex.yandexnavi
+vk.ru, vkvideo.ru, vk.cc, vk.com, vk.link, vk.me, androidapp://com.uma.musicvk, androidapp://com.vk.admin, androidapp://com.vk.calls, androidapp://com.vk.clips, androidapp://com.vk.im, androidapp://com.vk.love, androidapp://com.vk.vkvideo, androidapp://com.vkontakte.android
+vc.ru, androidapp://ru.artrobot.siliconrus
+hh.ru, androidapp://ru.hh.android, androidapp://ru.hh.employer.android
+blogspot.ru, androidapp://com.google.android.apps.nbu.paisa.user, androidapp://com.google.android.apps.tycho, androidapp://com.google.android.gms, androidapp://com.google.android.gms.supervision
+tbank.ru, androidapp://com.idamob.tinkoff.android, androidapp://ru.tcsbank.tinkoffplatinum, androidapp://ru.tinkoff.investing, androidapp://ru.tinkoff.sme, androidapp://ru.tinkoff.www.twa
+dtf.ru, androidapp://ru.cmtt.dtf
+kontur.ru, androidapp://ru.kontur.diadoc2, androidapp://ru.kontur.hotel, androidapp://ru.kontur.logistics, androidapp://ru.kontur.market, androidapp://ru.kontur.packages, androidapp://ru.kontur.reconciliation
+aliexpress.ru, androidapp://ru.aliexpress.buyer
+pinterest.ru, pinterest.at, pinterest.ca, pinterest.ch, pinterest.cl, pinterest.co.kr, pinterest.co.uk, pinterest.com, pinterest.com.au, pinterest.com.mx, pinterest.de, pinterest.dk, pinterest.es, pinterest.fr, pinterest.ie, pinterest.it, pinterest.jp, pinterest.nz, pinterest.ph, pinterest.pt, pinterest.se
+yoomoney.ru, androidapp://ru.yoo.money
+superjob.ru, androidapp://ru.superjob.client.android
+rabota.ru, androidapp://ru.rabota.app2
+ostrovok.ru, androidapp://ru.ostrovok.android
+fc-zenit.ru, androidapp://ru.infoshell.android
+9111.ru, androidapp://ru.app9111.app
+amocrm.ru, androidapp://com.amocrm.amocrmv2
+airbnb.ru, airbnb.at, airbnb.be, airbnb.ca, airbnb.ch, airbnb.cl, airbnb.co.cr, airbnb.co.id, airbnb.co.in, airbnb.co.kr, airbnb.co.nz, airbnb.co.uk, airbnb.co.ve, airbnb.com, airbnb.com.ar, airbnb.com.au, airbnb.com.bo, airbnb.com.br, airbnb.com.bz, airbnb.com.co, airbnb.com.ec, airbnb.com.gt, airbnb.com.hk, airbnb.com.hn, airbnb.com.mt, airbnb.com.my, airbnb.com.ni, airbnb.com.pa, airbnb.com.pe, airbnb.com.py, airbnb.com.sg, airbnb.com.sv, airbnb.com.tr, airbnb.com.tw, airbnb.cz, airbnb.de, airbnb.dk, airbnb.es, airbnb.fi, airbnb.fr, airbnb.gr, airbnb.gy, airbnb.hu, airbnb.ie, airbnb.is, airbnb.it, airbnb.jp, airbnb.mx, airbnb.nl, airbnb.no, airbnb.pl, airbnb.pt, airbnb.se, androidapp://com.airbnb.android
+vseprosport.ru, androidapp://ru.vseprosport_app
+mybook.ru, androidapp://ru.mybook
+start.ru, androidapp://ru.start.androidmobile
+hoff.ru, androidapp://ru.hoff.app
+kion.ru, androidapp://ru.mts.mtstv
+skyscanner.ru, androidapp://net.skyscanner.android.main
+school97.ru, androidapp://ru.school97.harmony
+dom.ru, androidapp://com.ertelecom.agent
+avtocod.ru, androidapp://ru.avtocod
+joom.ru, androidapp://com.joom, androidapp://tech.jm
+loveplanet.ru, androidapp://ru.loveplanet.app, androidapp://ru.loveplanet.global.app

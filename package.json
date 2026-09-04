@@ -1,0 +1,17 @@
+{
+  "name": "rf-vaultwarden-domain-rules",
+  "version": "1.0.0",
+  "private": true,
+  "type": "module",
+  "description": "Collect evidence-backed Vaultwarden equivalent-domain rules from Russian domain rankings.",
+  "scripts": {
+    "scan": "node collect-rf-equivalent-domains.mjs",
+    "test": "node --test"
+  },
+  "dependencies": {
+    "tldts": "7.4.11"
+  },
+  "engines": {
+    "node": ">=20"
+  }
+}
