@@ -201,9 +201,36 @@ async function fetchWithTimeout(url, { timeoutMs, headers = {}, maxBytes = 8 * 1
   if (length > maxBytes) throw new Error(`ответ больше ${maxBytes} байт`);
   const contentType = (response.headers.get('content-type') || '').toLowerCase();
   if (jsonOnly && !contentType.includes('json')) throw new Error(`неверный Content-Type: ${contentType || 'пусто'}`);
-  const buffer = new Uint8Array(await response.arrayBuffer());
-  if (buffer.byteLength > maxBytes) throw new Error(`ответ больше ${maxBytes} байт`);
+  const buffer = await readResponseBodyLimited(response, maxBytes);
   return new TextDecoder('utf-8', { fatal: false }).decode(buffer);
+}
+
+export async function readResponseBodyLimited(response, maxBytes) {
+  if (!response.body) return new Uint8Array();
+  const reader = response.body.getReader();
+  const chunks = [];
+  let total = 0;
+  try {
+    while (true) {
+      const { done, value } = await reader.read();
+      if (done) break;
+      total += value.byteLength;
+      if (total > maxBytes) {
+        await reader.cancel();
+        throw new Error(`ответ больше ${maxBytes} байт`);
+      }
+      chunks.push(value);
+    }
+  } finally {
+    reader.releaseLock();
+  }
+  const buffer = new Uint8Array(total);
+  let offset = 0;
+  for (const chunk of chunks) {
+    buffer.set(chunk, offset);
+    offset += chunk.byteLength;
+  }
+  return buffer;
 }
 
 async function majesticCandidates(limit, timeoutMs) {
@@ -329,7 +356,7 @@ export function extractCredentialDeclarations(payload, sourceOrigin) {
     } else if (target?.namespace === 'android_app') {
       const packageName = typeof target.package_name === 'string' ? target.package_name.trim() : '';
       const fingerprints = Array.isArray(target.sha256_cert_fingerprints)
-        ? target.sha256_cert_fingerprints.filter((value) => typeof value === 'string' && value.trim())
+        ? target.sha256_cert_fingerprints.filter(isValidSha256Fingerprint)
         : [];
       if (/^[A-Za-z][A-Za-z0-9_]*(?:\.[A-Za-z0-9_]+)+$/.test(packageName) && fingerprints.length) {
         android.push({ packageName, fingerprints, sourceOrigin });
@@ -340,6 +367,10 @@ export function extractCredentialDeclarations(payload, sourceOrigin) {
     web: [...new Map(web.map((item) => [item.origin, item])).values()],
     android: [...new Map(android.map((item) => [item.packageName, item])).values()],
   };
+}
+
+export function isValidSha256Fingerprint(value) {
+  return typeof value === 'string' && /^(?:[0-9A-Fa-f]{2}:){31}[0-9A-Fa-f]{2}$/.test(value.trim());
 }
 
 function cacheFresh(entry, cacheHours) {
@@ -475,19 +506,34 @@ export function buildDalGroups(records, candidateRanks, { allowPrereleaseApps = 
   const directed = new Map();
   const apps = [];
   const rejectedApps = [];
+  const unrepresentableWebLinks = [];
   for (const [sourceOrigin, record] of records) {
     if (record.status !== 'ok') continue;
-    const sourceDomain = registrableDomain(new URL(sourceOrigin).hostname);
+    const sourceHost = normalizeHostname(new URL(sourceOrigin).hostname);
+    const sourceDomain = registrableDomain(sourceHost);
     if (!sourceDomain) continue;
+    if (sourceHost !== sourceDomain) {
+      for (const declaration of record.declarations.web) {
+        unrepresentableWebLinks.push({ sourceOrigin, targetOrigin: declaration.origin, reason: 'subdomain-source' });
+      }
+      for (const declaration of record.declarations.android) {
+        rejectedApps.push({ sourceOrigin, sourceDomain, packageName: declaration.packageName, reason: 'subdomain-source' });
+      }
+      continue;
+    }
     for (const declaration of record.declarations.web) {
-      const targetDomain = registrableDomain(new URL(declaration.origin).hostname);
-      if (targetDomain && targetDomain !== sourceDomain) {
+      const targetHost = normalizeHostname(new URL(declaration.origin).hostname);
+      const targetDomain = registrableDomain(targetHost);
+      if (targetDomain && targetHost === targetDomain && targetDomain !== sourceDomain) {
         directed.set(edgeKey(sourceOrigin, declaration.origin), { sourceOrigin, targetOrigin: declaration.origin, sourceDomain, targetDomain });
+      } else if (targetDomain && targetHost !== targetDomain) {
+        unrepresentableWebLinks.push({ sourceOrigin, targetOrigin: declaration.origin, reason: 'subdomain-target' });
       }
     }
     for (const declaration of record.declarations.android) {
       const item = { sourceOrigin, sourceDomain, packageName: declaration.packageName };
-      if (!allowPrereleaseApps && isPrereleasePackage(declaration.packageName)) rejectedApps.push(item);
+      if (!declaration.fingerprints?.some(isValidSha256Fingerprint)) rejectedApps.push({ ...item, reason: 'invalid-fingerprint' });
+      else if (!allowPrereleaseApps && isPrereleasePackage(declaration.packageName)) rejectedApps.push({ ...item, reason: 'prerelease-package' });
       else apps.push(item);
     }
   }
@@ -533,7 +579,7 @@ export function buildDalGroups(records, candidateRanks, { allowPrereleaseApps = 
       evidence: { reciprocalWeb: group.webEvidence, siteDeclaredAndroid: group.appEvidence },
     });
   }
-  return { groups, nonReciprocal, rejectedApps };
+  return { groups, nonReciprocal, rejectedApps, unrepresentableWebLinks };
 }
 
 export function parseBitwardenGlobal(text) {
@@ -662,12 +708,14 @@ async function writeResults(options, metadata, candidateRanks, records, analysis
       bitwardenGlobalGroups: catalogs.bitwarden.length,
       appleSharedGroups: catalogs.apple.length,
       nonReciprocalWebLinks: analysis.nonReciprocal.length,
-      rejectedPrereleaseApps: analysis.rejectedApps.length,
+      unrepresentableWebLinks: analysis.unrepresentableWebLinks.length,
+      rejectedAndroidApps: analysis.rejectedApps.length,
     },
     groups: ready,
     alreadyInBitwardenGlobal: alreadyGlobal,
     nonReciprocalWebLinks: analysis.nonReciprocal,
-    rejectedPrereleaseApps: analysis.rejectedApps,
+    unrepresentableWebLinks: analysis.unrepresentableWebLinks,
+    rejectedAndroidApps: analysis.rejectedApps,
     catalogErrors: catalogs.errors,
   };
   await atomicWrite(evidencePath, `${JSON.stringify(evidence, null, 2)}\n`);

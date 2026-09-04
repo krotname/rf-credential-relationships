@@ -9,7 +9,7 @@ kontur.ru, androidapp://ru.kontur.diadoc2, androidapp://ru.kontur.hotel, android
 aliexpress.ru, androidapp://ru.aliexpress.buyer
 pinterest.ru, pinterest.at, pinterest.ca, pinterest.ch, pinterest.cl, pinterest.co.kr, pinterest.co.uk, pinterest.com, pinterest.com.au, pinterest.com.mx, pinterest.de, pinterest.dk, pinterest.es, pinterest.fr, pinterest.ie, pinterest.it, pinterest.jp, pinterest.nz, pinterest.ph, pinterest.pt, pinterest.se
 yoomoney.ru, androidapp://ru.yoo.money
-superjob.ru, superjob.uz, androidapp://ru.superjob.client.android
+superjob.ru, androidapp://ru.superjob.client.android
 rabota.ru, androidapp://ru.rabota.app2
 ostrovok.ru, androidapp://ru.ostrovok.android
 fc-zenit.ru, androidapp://ru.infoshell.android

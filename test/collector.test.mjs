@@ -3,14 +3,18 @@ import assert from 'node:assert/strict';
 import {
   buildDalGroups,
   extractCredentialDeclarations,
+  isValidSha256Fingerprint,
   isPrereleasePackage,
   normalizeHostname,
   normalizeWebOrigin,
   parseAppleShared,
   parseArgs,
   parseBitwardenGlobal,
+  readResponseBodyLimited,
   registrableDomain,
 } from '../collect-rf-equivalent-domains.mjs';
+
+const VALID_FINGERPRINT = Array.from({ length: 32 }, (_, index) => index.toString(16).padStart(2, '0')).join(':');
 
 test('keeps the ranking limit separate from bounded verification origins', () => {
   const options = parseArgs(['--limit', '5000']);
@@ -34,7 +38,7 @@ test('extracts only credential-sharing declarations', () => {
       relation: ['delegate_permission/common.get_login_creds'],
       target: {
         namespace: 'android_app', package_name: 'ru.example.app',
-        sha256_cert_fingerprints: ['AA:BB'],
+        sha256_cert_fingerprints: [VALID_FINGERPRINT],
       },
     },
   ];
@@ -48,7 +52,10 @@ test('requires reciprocal web declarations and excludes debug apps', () => {
     ['https://a.ru', {
       status: 'ok', declarations: {
         web: [{ origin: 'https://b.ru' }, { origin: 'https://one-way.ru' }],
-        android: [{ packageName: 'ru.example.release' }, { packageName: 'ru.example.debug' }],
+        android: [
+          { packageName: 'ru.example.release', fingerprints: [VALID_FINGERPRINT] },
+          { packageName: 'ru.example.debug', fingerprints: [VALID_FINGERPRINT] },
+        ],
       },
     }],
     ['https://b.ru', {
@@ -59,6 +66,26 @@ test('requires reciprocal web declarations and excludes debug apps', () => {
   assert.deepEqual(result.groups[0].members.sort(), ['a.ru', 'androidapp://ru.example.release', 'b.ru']);
   assert.equal(result.nonReciprocal.length, 1);
   assert.equal(result.rejectedApps[0].packageName, 'ru.example.debug');
+});
+
+test('rejects malformed fingerprints and subdomain-only web relations', async () => {
+  assert.equal(isValidSha256Fingerprint(VALID_FINGERPRINT), true);
+  assert.equal(isValidSha256Fingerprint('AA:BB'), false);
+  const declarations = extractCredentialDeclarations([{
+    relation: ['delegate_permission/common.get_login_creds'],
+    target: { namespace: 'android_app', package_name: 'ru.example.app', sha256_cert_fingerprints: ['AA:BB'] },
+  }], 'https://a.ru');
+  assert.equal(declarations.android.length, 0);
+
+  const records = new Map([
+    ['https://a.ru', { status: 'ok', declarations: { web: [{ origin: 'https://login.b.ru' }], android: [] } }],
+    ['https://login.b.ru', { status: 'ok', declarations: { web: [{ origin: 'https://a.ru' }], android: [] } }],
+  ]);
+  const subdomainResult = buildDalGroups(records, new Map([['a.ru', 1]]));
+  assert.equal(subdomainResult.groups.length, 0);
+  assert.equal(subdomainResult.unrepresentableWebLinks.length, 2);
+
+  await assert.rejects(() => readResponseBodyLimited(new Response('123456'), 5), /ответ больше 5 байт/);
 });
 
 test('recognizes prerelease package markers', () => {
