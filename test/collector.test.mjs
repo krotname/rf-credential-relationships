@@ -5,6 +5,7 @@ import {
   extractCredentialDeclarations,
   isPrereleasePackage,
   normalizeHostname,
+  normalizeWebOrigin,
   parseAppleShared,
   parseArgs,
   parseBitwardenGlobal,
@@ -22,6 +23,7 @@ test('normalizes IDN and registrable domains', () => {
   assert.equal(normalizeHostname('https://ПРИМЕР.РФ/'), 'xn--e1afmkfd.xn--p1ai');
   assert.equal(registrableDomain('www.mail.example.co.uk'), 'example.co.uk');
   assert.equal(normalizeHostname('127.0.0.1'), null);
+  assert.equal(normalizeWebOrigin('https://u@example.com'), null);
 });
 
 test('extracts only credential-sharing declarations', () => {

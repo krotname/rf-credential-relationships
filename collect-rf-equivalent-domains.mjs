@@ -159,7 +159,8 @@ export function registrableDomain(value) {
 export function normalizeWebOrigin(value) {
   try {
     const url = new URL(value);
-    if (url.protocol !== 'https:' || url.username || url.password || url.port) return null;
+    const authority = url.href.slice(url.protocol.length + 2).split('/')[0];
+    if (url.protocol !== 'https:' || authority.includes('@') || url.port) return null;
     if (!normalizeHostname(url.hostname)) return null;
     if (url.pathname !== '/' || url.search || url.hash) return null;
     return url.origin;
