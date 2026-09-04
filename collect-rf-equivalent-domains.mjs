@@ -189,18 +189,28 @@ export function parseCsvLine(line) {
   return fields;
 }
 
-async function fetchWithTimeout(url, { timeoutMs, headers = {}, maxBytes = 8 * 1024 * 1024, jsonOnly = false } = {}) {
+export async function fetchWithTimeout(url, { timeoutMs, headers = {}, maxBytes = 8 * 1024 * 1024, jsonOnly = false } = {}) {
   const response = await fetch(url, {
     headers: { 'user-agent': 'rf-vaultwarden-domain-rules/1.0', ...headers },
     redirect: 'manual',
     signal: AbortSignal.timeout(timeoutMs),
   });
-  if (!response.ok) throw new Error(`HTTP ${response.status}`);
-  if (response.status >= 300 && response.status < 400) throw new Error(`redirect ${response.status}`);
+  const rejectResponse = async (message) => {
+    try {
+      await response.body?.cancel();
+    } catch {
+      // The response is already unusable; preserve the original rejection reason.
+    }
+    throw new Error(message);
+  };
+  if (!response.ok) return rejectResponse(`HTTP ${response.status}`);
+  if (response.status >= 300 && response.status < 400) return rejectResponse(`redirect ${response.status}`);
   const length = Number(response.headers.get('content-length') || 0);
-  if (length > maxBytes) throw new Error(`ответ больше ${maxBytes} байт`);
+  if (length > maxBytes) return rejectResponse(`ответ больше ${maxBytes} байт`);
   const contentType = (response.headers.get('content-type') || '').toLowerCase();
-  if (jsonOnly && !contentType.includes('json')) throw new Error(`неверный Content-Type: ${contentType || 'пусто'}`);
+  if (jsonOnly && !contentType.includes('json')) {
+    return rejectResponse(`неверный Content-Type: ${contentType || 'пусто'}`);
+  }
   const buffer = await readResponseBodyLimited(response, maxBytes);
   return new TextDecoder('utf-8', { fatal: false }).decode(buffer);
 }

@@ -1,8 +1,10 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
+import { createServer } from 'node:http';
 import {
   buildDalGroups,
   extractCredentialDeclarations,
+  fetchWithTimeout,
   isValidSha256Fingerprint,
   isPrereleasePackage,
   normalizeHostname,
@@ -86,6 +88,30 @@ test('rejects malformed fingerprints and subdomain-only web relations', async ()
   assert.equal(subdomainResult.unrepresentableWebLinks.length, 2);
 
   await assert.rejects(() => readResponseBodyLimited(new Response('123456'), 5), /ответ больше 5 байт/);
+});
+
+test('cancels a response body rejected before streaming', async () => {
+  const server = createServer((request, response) => {
+    response.writeHead(200, {
+      'content-type': 'application/json',
+      'content-length': 1024 * 1024,
+    });
+    response.end('[]');
+  });
+  await new Promise((resolve) => server.listen(0, '127.0.0.1', resolve));
+  try {
+    const { port } = server.address();
+    await assert.rejects(
+      () => fetchWithTimeout(`http://127.0.0.1:${port}/assetlinks.json`, {
+        timeoutMs: 1000,
+        maxBytes: 16,
+        jsonOnly: true,
+      }),
+      /ответ больше 16 байт/,
+    );
+  } finally {
+    await new Promise((resolve) => server.close(resolve));
+  }
 });
 
 test('recognizes prerelease package markers', () => {
