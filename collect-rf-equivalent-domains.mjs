@@ -7,7 +7,7 @@ import process from 'node:process';
 import readline from 'node:readline';
 import { Readable } from 'node:stream';
 import { domainToASCII, fileURLToPath } from 'node:url';
-import { getDomain } from 'tldts';
+import { getDomain, parse as parseDomain } from 'tldts';
 
 export const LOGIN_RELATION = 'delegate_permission/common.get_login_creds';
 
@@ -19,17 +19,18 @@ const APPLE_SHARED_URL =
   'https://raw.githubusercontent.com/apple/password-manager-resources/main/quirks/shared-credentials.json';
 const RUSSIAN_SUFFIXES = new Set(['ru', 'su', 'xn--p1ai']);
 const MAX_ASSETLINKS_BYTES = 1024 * 1024;
+const MAX_ASSOCIATION_BYTES = 1024 * 1024;
 const CACHE_VERSION = 1;
 const BLOCKED_APP_PARTS = new Set([
-  'acceptance', 'alpha', 'beta', 'broteam', 'canary', 'corplogin', 'debug', 'demo', 'dev',
+  'acceptance', 'adhoc', 'alpha', 'beta', 'broteam', 'canary', 'corplogin', 'debug', 'demo', 'dev',
   'development', 'dogfood', 'internal', 'pr', 'preprod', 'preview', 'proddebug',
-  'qa', 'sample', 'sandbox', 'stage', 'staging', 'teamfood', 'teamfood2', 'test',
+  'nightly', 'qa', 'sample', 'sandbox', 'stage', 'staging', 'teamfood', 'teamfood2', 'test',
   'testing', 'uat',
 ]);
 
 function usage() {
   return `
-Сборщик эквивалентных доменов для Vaultwarden
+Сборщик связей доменов и приложений для менеджеров учётных данных
 
 Использование:
   node collect-rf-equivalent-domains.mjs [параметры]
@@ -52,7 +53,8 @@ function usage() {
   --check-www             Отдельно проверять www для каждого домена
   --refresh               Не использовать прежний кэш
   --no-catalogs           Не сверять Bitwarden и Apple
-  --allow-prerelease-apps Не отбрасывать debug/beta/test Android-пакеты
+  --no-associations       Не проверять Apple AASA и WebAuthn Related Origins
+  --allow-prerelease-apps Не отбрасывать debug/beta/test идентификаторы приложений
   --help                   Эта справка
 `;
 }
@@ -80,6 +82,7 @@ export function parseArgs(argv) {
     checkWww: false,
     refresh: false,
     catalogs: true,
+    associations: true,
     allowPrereleaseApps: false,
     help: false,
   };
@@ -100,6 +103,7 @@ export function parseArgs(argv) {
     else if (option === '--refresh') options.refresh = true;
     else if (option === '--check-www') options.checkWww = true;
     else if (option === '--no-catalogs') options.catalogs = false;
+    else if (option === '--no-associations') options.associations = false;
     else if (option === '--allow-prerelease-apps') options.allowPrereleaseApps = true;
     else if (stringOptions.has(option)) {
       options[stringOptions.get(option)] = readValue(argv, index, option);
@@ -118,8 +122,8 @@ export function parseArgs(argv) {
     throw new Error('Источник должен быть majestic, cloudflare или file');
   }
   if (!Number.isInteger(options.limit) || options.limit < 1) throw new Error('--limit должен быть целым числом >= 1');
-  if (!Number.isInteger(options.concurrency) || options.concurrency < 1 || options.concurrency > 100) {
-    throw new Error('--concurrency должен быть целым числом от 1 до 100');
+  if (!Number.isInteger(options.concurrency) || options.concurrency < 1 || options.concurrency > 400) {
+    throw new Error('--concurrency должен быть целым числом от 1 до 400');
   }
   if (!Number.isInteger(options.timeoutMs) || options.timeoutMs < 500) throw new Error('--timeout-ms должен быть >= 500');
   if (options.source === 'file' && !options.input && !options.domains) {
@@ -156,6 +160,13 @@ export function registrableDomain(value) {
   return getDomain(hostname, { allowPrivateDomains: false }) || null;
 }
 
+export function isPublicWebHostname(value) {
+  const hostname = normalizeHostname(value);
+  if (!hostname) return false;
+  const parsed = parseDomain(hostname, { allowPrivateDomains: true });
+  return Boolean(parsed.domain && (parsed.isIcann || parsed.isPrivate));
+}
+
 export function normalizeWebOrigin(value) {
   try {
     const url = new URL(value);
@@ -189,12 +200,37 @@ export function parseCsvLine(line) {
   return fields;
 }
 
-export async function fetchWithTimeout(url, { timeoutMs, headers = {}, maxBytes = 8 * 1024 * 1024, jsonOnly = false } = {}) {
-  const response = await fetch(url, {
-    headers: { 'user-agent': 'rf-vaultwarden-domain-rules/1.0', ...headers },
-    redirect: 'manual',
-    signal: AbortSignal.timeout(timeoutMs),
-  });
+export async function fetchWithTimeout(url, {
+  timeoutMs,
+  headers = {},
+  maxBytes = 8 * 1024 * 1024,
+  jsonOnly = false,
+  strictJsonContentType = false,
+  redirect = 'manual',
+} = {}) {
+  const signal = AbortSignal.timeout(timeoutMs);
+  let currentUrl = url;
+  let response;
+  let redirectCount = 0;
+  while (true) {
+    response = await fetch(currentUrl, {
+      headers: { 'user-agent': 'rf-vaultwarden-domain-rules/2.0', ...headers },
+      redirect: redirect === 'follow-https' ? 'manual' : redirect,
+      signal,
+    });
+    if (redirect !== 'follow-https' || response.status < 300 || response.status >= 400) break;
+    const location = response.headers.get('location');
+    await response.body?.cancel();
+    if (!location) throw new Error(`redirect ${response.status} без Location`);
+    const nextUrl = new URL(location, currentUrl);
+    if (nextUrl.protocol !== 'https:') throw new Error('redirect вне HTTPS');
+    if (nextUrl.username || nextUrl.password || !isPublicWebHostname(nextUrl.hostname)) {
+      throw new Error('redirect на непубличный hostname');
+    }
+    redirectCount += 1;
+    if (redirectCount > 10) throw new Error('слишком много redirects');
+    currentUrl = nextUrl.href;
+  }
   const rejectResponse = async (message) => {
     try {
       await response.body?.cancel();
@@ -204,11 +240,11 @@ export async function fetchWithTimeout(url, { timeoutMs, headers = {}, maxBytes 
     throw new Error(message);
   };
   if (!response.ok) return rejectResponse(`HTTP ${response.status}`);
-  if (response.status >= 300 && response.status < 400) return rejectResponse(`redirect ${response.status}`);
   const length = Number(response.headers.get('content-length') || 0);
   if (length > maxBytes) return rejectResponse(`ответ больше ${maxBytes} байт`);
   const contentType = (response.headers.get('content-type') || '').toLowerCase();
-  if (jsonOnly && !contentType.includes('json')) {
+  const mediaType = contentType.split(';', 1)[0].trim();
+  if (jsonOnly && (strictJsonContentType ? mediaType !== 'application/json' : !contentType.includes('json'))) {
     return rejectResponse(`неверный Content-Type: ${contentType || 'пусто'}`);
   }
   const buffer = await readResponseBodyLimited(response, maxBytes);
@@ -245,7 +281,7 @@ export async function readResponseBodyLimited(response, maxBytes) {
 
 async function majesticCandidates(limit, timeoutMs) {
   const response = await fetch(MAJESTIC_URL, {
-    headers: { 'user-agent': 'rf-vaultwarden-domain-rules/1.0' },
+    headers: { 'user-agent': 'rf-vaultwarden-domain-rules/2.0' },
     redirect: 'follow',
     signal: AbortSignal.timeout(Math.max(timeoutMs, 120000)),
   });
@@ -375,8 +411,46 @@ export function extractCredentialDeclarations(payload, sourceOrigin) {
   }
   return {
     web: [...new Map(web.map((item) => [item.origin, item])).values()],
-    android: [...new Map(android.map((item) => [item.packageName, item])).values()],
+    android: [...android.reduce((items, item) => {
+      const existing = items.get(item.packageName);
+      if (existing) existing.fingerprints = [...new Set([...existing.fingerprints, ...item.fingerprints])];
+      else items.set(item.packageName, item);
+      return items;
+    }, new Map()).values()],
   };
+}
+
+export function extractAppleWebCredentials(payload) {
+  if (!payload || Array.isArray(payload) || typeof payload !== 'object') {
+    throw new Error('apple-app-site-association должен содержать JSON-объект');
+  }
+  const apps = Array.isArray(payload.webcredentials?.apps) ? payload.webcredentials.apps : [];
+  return [...new Set(apps
+    .filter((value) => typeof value === 'string')
+    .map((value) => value.trim())
+    .filter((value) => /^[A-Z0-9]{10}\.[A-Za-z0-9-]+(?:\.[A-Za-z0-9-]+)+$/.test(value)))];
+}
+
+export function extractWebAuthnRelatedOrigins(payload) {
+  if (!payload || Array.isArray(payload) || typeof payload !== 'object') {
+    throw new Error('.well-known/webauthn должен содержать JSON-объект');
+  }
+  if (!Array.isArray(payload.origins) || !payload.origins.every((value) => typeof value === 'string')) {
+    throw new Error('origins должен быть массивом строк');
+  }
+  const origins = [];
+  for (const value of payload.origins) {
+    try {
+      const url = new URL(value);
+      const authority = url.href.slice(url.protocol.length + 2).split('/')[0];
+      if (url.protocol === 'https:' && !authority.includes('@') && isPublicWebHostname(url.hostname)) {
+        origins.push(url.origin);
+      }
+    } catch {
+      // The WebAuthn algorithm ignores individual values that are not valid URLs.
+    }
+  }
+  return [...new Set(origins)];
 }
 
 export function isValidSha256Fingerprint(value) {
@@ -420,6 +494,35 @@ async function fetchAssetLinks(origin, options, cache) {
     });
     const declarations = extractCredentialDeclarations(JSON.parse(text), origin);
     entry = { checkedAt, status: 'ok', declarations };
+  } catch (error) {
+    entry = { checkedAt, status: 'rejected', error: error.message };
+  }
+  cache.entries[url] = entry;
+  return { ...entry, cached: false };
+}
+
+async function fetchAssociation(origin, kind, options, cache) {
+  const pathName = kind === 'aasa'
+    ? '/.well-known/apple-app-site-association'
+    : '/.well-known/webauthn';
+  const url = `${origin}${pathName}`;
+  const cached = cache.entries[url];
+  if (!options.refresh && cacheFresh(cached, options.cacheHours)) return { ...cached, cached: true };
+  const checkedAt = new Date().toISOString();
+  let entry;
+  try {
+    const text = await fetchWithTimeout(url, {
+      timeoutMs: options.timeoutMs,
+      maxBytes: MAX_ASSOCIATION_BYTES,
+      jsonOnly: true,
+      strictJsonContentType: kind === 'webauthn',
+      redirect: kind === 'webauthn' ? 'follow-https' : 'manual',
+    });
+    const payload = JSON.parse(text);
+    const values = kind === 'aasa'
+      ? extractAppleWebCredentials(payload)
+      : extractWebAuthnRelatedOrigins(payload);
+    entry = { checkedAt, status: 'ok', values };
   } catch (error) {
     entry = { checkedAt, status: 'rejected', error: error.message };
   }
@@ -485,6 +588,33 @@ async function crawlAssetLinks(candidateDomains, options, cache) {
         }
       }
     }
+  }
+  if (fetched >= 100) process.stderr.write('\n');
+  return records;
+}
+
+async function crawlAssociations(origins, options, cache) {
+  const records = { aasa: new Map(), webauthn: new Map() };
+  if (!options.associations) return records;
+  const jobs = [...new Set(origins)].flatMap((origin) => [
+    { origin, kind: 'aasa' },
+    { origin, kind: 'webauthn' },
+  ]);
+  const batchSize = Math.max(100, options.concurrency * 10);
+  process.stderr.write(`Дополнительные well-known: ${jobs.length} запросов\n`);
+  let fetched = 0;
+  while (jobs.length) {
+    const batch = jobs.splice(0, batchSize);
+    const batchResults = await mapLimit(batch, options.concurrency, async (job) => {
+      const result = await fetchAssociation(job.origin, job.kind, options, cache);
+      fetched += 1;
+      if (fetched % 100 === 0) {
+        process.stderr.write(`Проверено дополнительных well-known: ${fetched}; в очереди: ${jobs.length}\r`);
+      }
+      return [job, result];
+    });
+    for (const [job, result] of batchResults) records[job.kind].set(job.origin, result);
+    await atomicWrite(options.cachePath, `${JSON.stringify(cache)}\n`);
   }
   if (fetched >= 100) process.stderr.write('\n');
   return records;
@@ -592,6 +722,78 @@ export function buildDalGroups(records, candidateRanks, { allowPrereleaseApps = 
   return { groups, nonReciprocal, rejectedApps, unrepresentableWebLinks };
 }
 
+export function buildTypedRelations(records, associationRecords, { allowPrereleaseApps = false } = {}) {
+  const relations = new Map();
+  const directedWeb = new Set();
+  for (const [sourceOrigin, record] of records) {
+    if (record.status !== 'ok') continue;
+    for (const declaration of record.declarations.web) {
+      directedWeb.add(edgeKey(sourceOrigin, declaration.origin));
+    }
+  }
+  const add = (relation) => {
+    const key = `${relation.type}\u0000${relation.source}\u0000${relation.target}`;
+    if (!relations.has(key)) relations.set(key, relation);
+  };
+  for (const [sourceOrigin, record] of records) {
+    if (record.status !== 'ok') continue;
+    const evidenceUrl = `${sourceOrigin}/.well-known/assetlinks.json`;
+    for (const declaration of record.declarations.web) {
+      if (declaration.origin === sourceOrigin) continue;
+      add({
+        type: 'dal_web_credentials',
+        source: sourceOrigin,
+        target: declaration.origin,
+        evidenceUrl,
+        observedAt: record.checkedAt,
+        reciprocal: directedWeb.has(edgeKey(declaration.origin, sourceOrigin)),
+      });
+    }
+    for (const declaration of record.declarations.android) {
+      if (!allowPrereleaseApps && isPrereleasePackage(declaration.packageName)) continue;
+      add({
+        type: 'dal_android_credentials',
+        source: sourceOrigin,
+        target: `androidapp://${declaration.packageName}`,
+        evidenceUrl,
+        observedAt: record.checkedAt,
+        fingerprints: [...new Set(declaration.fingerprints)].sort(),
+      });
+    }
+  }
+  for (const [sourceOrigin, record] of associationRecords.aasa) {
+    if (record.status !== 'ok') continue;
+    for (const appId of record.values) {
+      const bundleId = appId.slice(appId.indexOf('.') + 1);
+      if (!allowPrereleaseApps && isPrereleasePackage(bundleId)) continue;
+      add({
+        type: 'apple_webcredentials',
+        source: sourceOrigin,
+        target: `appleapp://${appId}`,
+        evidenceUrl: `${sourceOrigin}/.well-known/apple-app-site-association`,
+        observedAt: record.checkedAt,
+      });
+    }
+  }
+  for (const [sourceOrigin, record] of associationRecords.webauthn) {
+    if (record.status !== 'ok') continue;
+    for (const relatedOrigin of record.values) {
+      if (relatedOrigin === sourceOrigin) continue;
+      add({
+        type: 'webauthn_related_origin',
+        source: sourceOrigin,
+        target: relatedOrigin,
+        evidenceUrl: `${sourceOrigin}/.well-known/webauthn`,
+        observedAt: record.checkedAt,
+      });
+    }
+  }
+  return [...relations.values()].sort((left, right) =>
+    left.type.localeCompare(right.type) ||
+    left.source.localeCompare(right.source) ||
+    left.target.localeCompare(right.target));
+}
+
 export function parseBitwardenGlobal(text) {
   const groups = [];
   const expression = /GlobalDomains\.Add\([^,]+,\s*new List<string>\s*\{([^}]+)\}\s*\);/g;
@@ -681,7 +883,13 @@ function fetchStatusCounts(records) {
   return counts;
 }
 
-async function writeResults(options, metadata, candidateRanks, records, analysis, catalogs) {
+function relationTypeCounts(relations) {
+  const counts = {};
+  for (const relation of relations) counts[relation.type] = (counts[relation.type] || 0) + 1;
+  return counts;
+}
+
+async function writeResults(options, metadata, candidateRanks, records, analysis, catalogs, associationRecords, relations) {
   const appleGroups = catalogs.apple
     .filter((members) => members.some((member) => candidateRanks.has(member)))
     .map((members) => ({ members, sources: ['apple-shared-credentials'], evidence: null }));
@@ -695,10 +903,23 @@ async function writeResults(options, metadata, candidateRanks, records, analysis
   const readyPath = path.join(options.out, 'vaultwarden-equivalent-domains.txt');
   const jsonPath = path.join(options.out, 'vaultwarden-equivalent-domains.json');
   const evidencePath = path.join(options.out, 'evidence.json');
+  const relationshipsPath = path.join(options.out, 'relationships.json');
   await atomicWrite(readyPath, ready.map((group) => group.members.join(', ')).join('\n') + (ready.length ? '\n' : ''));
   await atomicWrite(jsonPath, `${JSON.stringify(ready.map((group) => group.members), null, 2)}\n`);
+  const generatedAt = new Date().toISOString();
+  const relationships = {
+    schemaVersion: 1,
+    generatedAt,
+    ranking: metadata,
+    statistics: {
+      totalRelations: relations.length,
+      relationsByType: relationTypeCounts(relations),
+    },
+    relations,
+  };
+  await atomicWrite(relationshipsPath, `${JSON.stringify(relationships, null, 2)}\n`);
   const evidence = {
-    generatedAt: new Date().toISOString(),
+    generatedAt,
     ranking: metadata,
     options: {
       limit: options.limit,
@@ -707,6 +928,7 @@ async function writeResults(options, metadata, candidateRanks, records, analysis
       catalogs: options.catalogs,
       checkWww: options.checkWww,
       maxDiscovered: options.maxDiscovered,
+      associations: options.associations,
       allowPrereleaseApps: options.allowPrereleaseApps,
     },
     statistics: {
@@ -720,6 +942,12 @@ async function writeResults(options, metadata, candidateRanks, records, analysis
       nonReciprocalWebLinks: analysis.nonReciprocal.length,
       unrepresentableWebLinks: analysis.unrepresentableWebLinks.length,
       rejectedAndroidApps: analysis.rejectedApps.length,
+      checkedAppleAssociations: associationRecords.aasa.size,
+      appleAssociationStatuses: fetchStatusCounts(associationRecords.aasa),
+      checkedWebAuthnAssociations: associationRecords.webauthn.size,
+      webAuthnAssociationStatuses: fetchStatusCounts(associationRecords.webauthn),
+      totalTypedRelations: relations.length,
+      relationsByType: relationTypeCounts(relations),
     },
     groups: ready,
     alreadyInBitwardenGlobal: alreadyGlobal,
@@ -729,7 +957,7 @@ async function writeResults(options, metadata, candidateRanks, records, analysis
     catalogErrors: catalogs.errors,
   };
   await atomicWrite(evidencePath, `${JSON.stringify(evidence, null, 2)}\n`);
-  return { readyPath, jsonPath, evidencePath, ready, evidence };
+  return { readyPath, jsonPath, evidencePath, relationshipsPath, ready, evidence, relationships };
 }
 
 export async function run(options) {
@@ -743,7 +971,9 @@ export async function run(options) {
     crawlAssetLinks(candidateResult.domains, options, cache),
     loadCatalogs(options),
   ]);
+  const associationRecords = await crawlAssociations([...records.keys()], options, cache);
   const analysis = buildDalGroups(records, candidateRanks, options);
+  const relations = buildTypedRelations(records, associationRecords, options);
   const result = await writeResults(
     options,
     { source: candidateResult.source, domains: candidateRanks.size },
@@ -751,20 +981,30 @@ export async function run(options) {
     records,
     analysis,
     catalogs,
+    associationRecords,
+    relations,
   );
   process.stdout.write(`Готовых пользовательских групп: ${result.ready.length}\n`);
-  process.stdout.write(`${result.readyPath}\n${result.jsonPath}\n${result.evidencePath}\n`);
+  process.stdout.write(
+    `${result.readyPath}\n${result.jsonPath}\n${result.evidencePath}\n${result.relationshipsPath}\n`,
+  );
   return result;
 }
 
 const isMain = process.argv[1] && fileURLToPath(import.meta.url) === path.resolve(process.argv[1]);
 if (isMain) {
+  let exitCode = 0;
   try {
     const options = parseArgs(process.argv.slice(2));
     if (options.help) process.stdout.write(usage());
     else await run(options);
   } catch (error) {
     process.stderr.write(`Ошибка: ${error.message}\n`);
-    process.exitCode = 1;
+    exitCode = 1;
   }
+  await Promise.all([
+    new Promise((resolve) => process.stdout.write('', resolve)),
+    new Promise((resolve) => process.stderr.write('', resolve)),
+  ]);
+  process.exit(exitCode);
 }

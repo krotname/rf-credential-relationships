@@ -11,6 +11,7 @@ param(
     [string]$InputFile,
     [string]$OutputDirectory = (Join-Path $PSScriptRoot 'out'),
     [switch]$CheckWww,
+    [switch]$SkipAssociations,
     [switch]$Refresh
 )
 
@@ -35,6 +36,7 @@ $nodeArguments = @(
 if ($InputFile) { $nodeArguments += @('--input', $InputFile) }
 if ($MaxDiscovered -ge 0) { $nodeArguments += @('--max-discovered', $MaxDiscovered) }
 if ($CheckWww) { $nodeArguments += '--check-www' }
+if ($SkipAssociations) { $nodeArguments += '--no-associations' }
 if ($Refresh) { $nodeArguments += '--refresh' }
 
 & node @nodeArguments
