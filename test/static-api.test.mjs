@@ -6,6 +6,7 @@ import os from 'node:os';
 import path from 'node:path';
 import { buildStaticApi } from '../scripts/build-static-api.mjs';
 import { validateStaticApi } from '../scripts/validate-static-api.mjs';
+import { prepareRelease } from '../scripts/prepare-release.mjs';
 
 function sha256(value) {
   return createHash('sha256').update(value).digest('hex');
@@ -103,6 +104,39 @@ async function fixtureRelease(root, version, releaseRelations) {
     file,
   };
 }
+
+test('prepares a patch release with preserved historical locks and a valid API', async (t) => {
+  const root = await fs.mkdtemp(path.join(os.tmpdir(), 'rf-release-prepare-'));
+  t.after(() => fs.rm(root, { recursive: true, force: true }));
+  const first = await fixtureRelease(root, '1.0.0', relations);
+  const configPath = path.join(root, 'releases.json');
+  const config = { schemaVersion: 1, baseUrl: 'https://example.test/project', releases: [first.config] };
+  await fs.writeFile(configPath, JSON.stringify(config));
+  const siteDir = path.join(root, 'site');
+  const initial = await buildStaticApi({ configPath, outDir: siteDir,
+    sourceOverrides: new Map([['1.0.0', first.file]]), verifyArtifactLocks: false });
+  first.config.apiArtifacts = initial.artifactLocks['1.0.0'];
+  await fs.writeFile(configPath, JSON.stringify(config));
+  const firstBytes = await fs.readFile(first.file);
+  t.mock.method(globalThis, 'fetch', async (url) => {
+    assert.equal(url, first.config.relationships.url);
+    return new Response(firstBytes);
+  });
+  const scanDir = path.join(root, 'scan');
+  await fs.mkdir(scanDir);
+  await fs.writeFile(path.join(scanDir, 'relationships.json'), firstBytes);
+  await fs.writeFile(path.join(scanDir, 'evidence.json'), JSON.stringify({
+    generatedAt: '2026-09-05T00:00:00.000Z', catalogErrors: [], statistics: { totalTypedRelations: 4 },
+  }));
+  await fs.writeFile(path.join(scanDir, 'vaultwarden-equivalent-domains.txt'), 'a.example, b.example\n');
+  const result = await prepareRelease({ configPath, scanDir, siteDir,
+    releaseDir: path.join(root, 'release'), now: new Date('2026-09-05T01:00:00Z') });
+  assert.equal(result.version, '1.0.1');
+  const index = JSON.parse(await fs.readFile(result.releaseConfigPath, 'utf8'));
+  assert.deepEqual(index.releases[0], first.config);
+  assert.equal(index.releases[1].apiArtifacts.relationships.sha256, sha256(firstBytes));
+  assert.deepEqual(await validateStaticApi({ siteDir: `${siteDir}-candidate` }), { version: '1.0.1', count: 4 });
+});
 
 test('builds and validates filtered static endpoints with bootstrap delta', async (t) => {
   const root = await fs.mkdtemp(path.join(os.tmpdir(), 'rf-static-api-'));
