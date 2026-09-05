@@ -46,6 +46,15 @@ function assertValid(validate, value, label) {
   if (!validate(value)) throw new Error(`${label}: ${JSON.stringify(validate.errors)}`);
 }
 
+function assertStatistics(dataset, label) {
+  const actual = Object.fromEntries(Object.keys(dataset.statistics.relationsByType).map((type) => [type, 0]));
+  for (const relation of dataset.relations) actual[relation.type] += 1;
+  if (dataset.statistics.totalRelations !== dataset.relations.length
+      || canonical(actual) !== canonical(dataset.statistics.relationsByType)) {
+    throw new Error(`Statistics ${label} не согласованы`);
+  }
+}
+
 function localPathForUrl(siteDir, value) {
   const pathname = new URL(value).pathname;
   const marker = '/api/';
@@ -87,21 +96,23 @@ export async function validateStaticApi({ siteDir = path.join(PROJECT_ROOT, 'sit
     if (sha256(datasetBytes) !== manifest.dataset.sha256 || dataset.relations.length !== manifest.dataset.count) {
       throw new Error(`Hash/count relationships ${manifest.version} не совпадает с manifest`);
     }
-    const statisticsTotal = Object.values(dataset.statistics.relationsByType).reduce((sum, count) => sum + count, 0);
-    if (statisticsTotal !== dataset.statistics.totalRelations || statisticsTotal !== dataset.relations.length) {
-      throw new Error(`Statistics relationships ${manifest.version} не согласованы`);
-    }
+    assertStatistics(dataset, `relationships ${manifest.version}`);
 
     let filteredTotal = 0;
     for (const [slug, artifact] of Object.entries(manifest.types)) {
       const bytes = await fs.readFile(localPathForUrl(siteDir, artifact.url));
       const filtered = JSON.parse(bytes.toString('utf8'));
       assertValid(validators['relationships-v1'], filtered, `type ${slug}`);
+      assertStatistics(filtered, `type ${slug}`);
       if (sha256(bytes) !== artifact.sha256 || filtered.relations.length !== artifact.count) {
         throw new Error(`Hash/count type ${slug} не совпадает с manifest`);
       }
       if (filtered.relations.some((relation) => relation.type !== artifact.relationshipType)) {
         throw new Error(`Endpoint ${slug} содержит другой тип связи`);
+      }
+      const expected = dataset.relations.filter((relation) => relation.type === artifact.relationshipType);
+      if (canonical(filtered.relations.map(canonical).sort()) !== canonical(expected.map(canonical).sort())) {
+        throw new Error(`Endpoint ${slug} не совпадает с фильтром dataset`);
       }
       filteredTotal += artifact.count;
     }
