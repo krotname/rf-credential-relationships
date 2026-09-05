@@ -11,7 +11,10 @@
     "validate:api": "node scripts/validate-static-api.mjs"
   },
   "dependencies": {
-    "tldts": "7.4.11"
+    "cacheable-lookup": "7.0.0",
+    "p-limit": "6.2.0",
+    "tldts": "7.4.11",
+    "undici": "6.28.1"
   },
   "devDependencies": {
     "ajv": "8.20.0",

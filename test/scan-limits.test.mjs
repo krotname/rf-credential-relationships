@@ -26,7 +26,7 @@ test('redirect fan-in shares a destination slot through body consumption', async
   };
   try {
     const results = await Promise.all(Array.from({ length: 5 }, (_, i) =>
-      fetchWithTimeout(`https://source${i}.ru/`, { redirect: 'follow-https', limiter })));
+      fetchWithTimeout(`https://source${i}.ru/`, { redirect: 'follow-https', limiter, resolveUrl: async () => {} })));
     assert.deepEqual(results, Array(5).fill('{}'));
     assert.equal(peak, 1);
     assert.ok(starts.slice(1).every((start, i) => start - starts[i] >= 20));
@@ -54,8 +54,8 @@ test('destination queueing does not spend the following request network timeout'
   };
   try {
     assert.deepEqual(await Promise.all([
-      fetchWithTimeout('https://a.ru/aasa', { limiter, timeoutMs: 30 }),
-      fetchWithTimeout('https://a.ru/webauthn', { limiter, timeoutMs: 30 }),
+      fetchWithTimeout('https://a.ru/aasa', { limiter, timeoutMs: 30, resolveUrl: async () => {} }),
+      fetchWithTimeout('https://a.ru/webauthn', { limiter, timeoutMs: 30, resolveUrl: async () => {} }),
     ]), ['{}', '{}']);
   } finally {
     globalThis.fetch = originalFetch;

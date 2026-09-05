@@ -9,6 +9,7 @@ import { Readable } from 'node:stream';
 import { domainToASCII, fileURLToPath } from 'node:url';
 import { getDomain, parse as parseDomain } from 'tldts';
 import { DestinationLimiter, DiscoveryBudget, describeFetchError } from './scripts/scan-limits.mjs';
+import { scanNetwork } from './scripts/scan-network.mjs';
 
 const destinationLimiter = new DestinationLimiter();
 
@@ -211,12 +212,15 @@ export async function fetchWithTimeout(url, {
   strictJsonContentType = false,
   redirect = 'manual',
   limiter = destinationLimiter,
+  dispatcher = scanNetwork.dispatcher,
+  resolveUrl = scanNetwork.resolveUrl,
 } = {}) {
   let remainingMs = timeoutMs;
   let currentUrl = url;
   let redirectCount = 0;
   while (true) {
     const result = await limiter.run(currentUrl, undefined, async () => {
+      await resolveUrl(currentUrl);
       // Waiting for our own destination limit must not exhaust network time.
       if (remainingMs <= 0) throw new Error('Исчерпан тайм-аут цепочки redirects');
       const started = performance.now();
@@ -226,6 +230,7 @@ export async function fetchWithTimeout(url, {
           headers: { 'user-agent': 'rf-credential-relationships/2.0', ...headers },
           redirect: 'manual',
           signal,
+          dispatcher,
         });
         if (['follow', 'follow-https'].includes(redirect) && [301, 302, 303, 307, 308].includes(response.status)) {
           const location = response.headers.get('location');
@@ -296,7 +301,9 @@ export async function readResponseBodyLimited(response, maxBytes) {
 }
 
 async function majesticCandidates(limit, timeoutMs) {
+  await scanNetwork.resolveUrl(MAJESTIC_URL);
   const response = await fetch(MAJESTIC_URL, {
+    dispatcher: scanNetwork.dispatcher,
     headers: { 'user-agent': 'rf-credential-relationships/2.0' },
     redirect: 'follow',
     signal: AbortSignal.timeout(Math.max(timeoutMs, 120000)),
