@@ -76,8 +76,17 @@ test('builds and validates filtered static endpoints with bootstrap delta', asyn
   t.after(() => fs.rm(root, { recursive: true, force: true }));
   const release = await fixtureRelease(root, '1.0.0', relations);
   const configPath = path.join(root, 'releases.json');
-  await fs.writeFile(configPath, JSON.stringify({ schemaVersion: 1, baseUrl: 'https://example.test/project', releases: [release.config] }));
+  const config = { schemaVersion: 1, baseUrl: 'https://example.test/project', releases: [release.config] };
+  await fs.writeFile(configPath, JSON.stringify(config));
   const siteDir = path.join(root, 'site');
+  const firstBuild = await buildStaticApi({
+    configPath,
+    outDir: siteDir,
+    sourceOverrides: new Map([['1.0.0', release.file]]),
+    verifyArtifactLocks: false,
+  });
+  config.releases[0].apiArtifacts = firstBuild.artifactLocks['1.0.0'];
+  await fs.writeFile(configPath, JSON.stringify(config));
   await buildStaticApi({ configPath, outDir: siteDir, sourceOverrides: new Map([['1.0.0', release.file]]) });
   const result = await validateStaticApi({ siteDir });
   assert.deepEqual(result, { version: '1.0.0', count: 4 });
@@ -107,10 +116,70 @@ test('computes a delta against the previous supported release', async (t) => {
     configPath,
     outDir: siteDir,
     sourceOverrides: new Map([['1.0.0', first.file], ['1.1.0', second.file]]),
+    verifyArtifactLocks: false,
   });
+  await validateStaticApi({ siteDir });
   const delta = JSON.parse(await fs.readFile(path.join(siteDir, 'api', 'v1.1.0', 'delta-from-previous.json'), 'utf8'));
   assert.equal(delta.bootstrap, false);
   assert.equal(delta.fromVersion, '1.0.0');
   assert.equal(delta.baseline, 'previous-release');
   assert.deepEqual(delta.statistics, { added: 1, removed: 1 });
+
+  delta.added = [];
+  delta.statistics.added = 0;
+  const deltaBytes = Buffer.from(`${JSON.stringify(delta, null, 2)}\n`);
+  await fs.writeFile(path.join(siteDir, 'api', 'v1.1.0', 'delta-from-previous.json'), deltaBytes);
+  const manifestPath = path.join(siteDir, 'api', 'v1.1.0', 'manifest.json');
+  const manifest = JSON.parse(await fs.readFile(manifestPath, 'utf8'));
+  manifest.delta.sha256 = sha256(deltaBytes);
+  manifest.delta.added = 0;
+  manifest.delta.count = 1;
+  await fs.writeFile(manifestPath, `${JSON.stringify(manifest, null, 2)}\n`);
+  await assert.rejects(validateStaticApi({ siteDir }), /не является точной разницей соседних datasets/);
+});
+
+test('rejects unlocked artifacts and non-increasing release order', async (t) => {
+  const root = await fs.mkdtemp(path.join(os.tmpdir(), 'rf-static-api-order-'));
+  t.after(() => fs.rm(root, { recursive: true, force: true }));
+  const first = await fixtureRelease(root, '1.0.0', relations.slice(0, 1));
+  const second = await fixtureRelease(root, '2.0.0', relations.slice(0, 2));
+  const configPath = path.join(root, 'releases.json');
+  await fs.writeFile(configPath, JSON.stringify({
+    schemaVersion: 1,
+    baseUrl: 'https://example.test/project',
+    releases: [second.config, first.config],
+  }));
+  await assert.rejects(buildStaticApi({
+    configPath,
+    outDir: path.join(root, 'site'),
+    sourceOverrides: new Map([['1.0.0', first.file], ['2.0.0', second.file]]),
+  }), /строго возрастать по SemVer/);
+
+  await fs.writeFile(configPath, JSON.stringify({
+    schemaVersion: 1,
+    baseUrl: 'https://example.test/project',
+    releases: [first.config],
+  }));
+  await assert.rejects(buildStaticApi({
+    configPath,
+    outDir: path.join(root, 'site'),
+    sourceOverrides: new Map([['1.0.0', first.file]]),
+  }), /отсутствует apiArtifacts lock/);
+
+  first.config.apiArtifacts = {
+    relationships: '0'.repeat(64),
+    manifest: '0'.repeat(64),
+    delta: '0'.repeat(64),
+    types: {},
+  };
+  await fs.writeFile(configPath, JSON.stringify({
+    schemaVersion: 1,
+    baseUrl: 'https://example.test/project',
+    releases: [first.config],
+  }));
+  await assert.rejects(buildStaticApi({
+    configPath,
+    outDir: path.join(root, 'site'),
+    sourceOverrides: new Map([['1.0.0', first.file]]),
+  }), /не совпадают с immutable lock/);
 });

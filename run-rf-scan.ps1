@@ -4,7 +4,7 @@ param(
     [string]$Source = 'majestic',
     [ValidateRange(1, 1000000)]
     [int]$Limit = 1000,
-    [ValidateRange(1, 100)]
+    [ValidateRange(1, 400)]
     [int]$Concurrency = 20,
     [ValidateRange(-1, 100000)]
     [int]$MaxDiscovered = -1,

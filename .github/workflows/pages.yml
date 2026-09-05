@@ -25,6 +25,7 @@ jobs:
           cache: npm
       - run: npm ci
       - run: npm test
+      - run: pwsh -NoProfile -File ./test/powershell-wrapper.test.ps1
       - run: npm run build:api
       - run: npm run validate:api
       - uses: actions/configure-pages@v5

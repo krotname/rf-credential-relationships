@@ -12,6 +12,32 @@ function sha256(value) {
   return createHash('sha256').update(value).digest('hex');
 }
 
+function canonical(value) {
+  if (Array.isArray(value)) return `[${value.map(canonical).join(',')}]`;
+  if (value && typeof value === 'object') {
+    return `{${Object.keys(value).sort().map((key) => `${JSON.stringify(key)}:${canonical(value[key])}`).join(',')}}`;
+  }
+  return JSON.stringify(value);
+}
+
+function compareSemanticVersions(left, right) {
+  const leftParts = left.replace(/^v/, '').split('.').map(Number);
+  const rightParts = right.replace(/^v/, '').split('.').map(Number);
+  for (let index = 0; index < 3; index += 1) {
+    if (leftParts[index] !== rightParts[index]) return leftParts[index] - rightParts[index];
+  }
+  return 0;
+}
+
+function expectedDelta(previous, current) {
+  const previousKeys = new Set((previous?.relations ?? []).map(canonical));
+  const currentKeys = new Set(current.relations.map(canonical));
+  return {
+    added: current.relations.filter((relation) => !previousKeys.has(canonical(relation))),
+    removed: (previous?.relations ?? []).filter((relation) => !currentKeys.has(canonical(relation))),
+  };
+}
+
 async function readJson(file) {
   return JSON.parse(await fs.readFile(file, 'utf8'));
 }
@@ -47,6 +73,9 @@ export async function validateStaticApi({ siteDir = path.join(PROJECT_ROOT, 'sit
   async function validateManifest(manifestPath) {
     const manifest = await readJson(manifestPath);
     assertValid(validators['manifest-v1'], manifest, `manifest ${manifest.version}`);
+    if (localPathForUrl(siteDir, manifest.schema) !== path.join(schemaDir, 'relationships-v1.schema.json')) {
+      throw new Error(`Manifest ${manifest.version} указывает на неизвестную schema`);
+    }
     const expectedSlugs = ['aasa-webcredentials', 'dal-android', 'dal-web', 'webauthn-related-origins'];
     if (JSON.stringify(Object.keys(manifest.types).sort()) !== JSON.stringify(expectedSlugs)) {
       throw new Error(`Manifest ${manifest.version} должен содержать четыре обязательных type endpoint`);
@@ -90,24 +119,43 @@ export async function validateStaticApi({ siteDir = path.join(PROJECT_ROOT, 'sit
     if (delta.bootstrap !== manifest.delta.bootstrap || delta.fromVersion !== manifest.delta.fromVersion) {
       throw new Error(`Семантика delta ${manifest.version} не совпадает с manifest`);
     }
-    return { manifest, dataset };
+    return { manifest, dataset, delta };
   }
 
   const apiDir = path.join(siteDir, 'api');
   const versionDirs = (await fs.readdir(apiDir, { withFileTypes: true }))
     .filter((entry) => entry.isDirectory() && /^v\d+\.\d+\.\d+$/.test(entry.name))
     .map((entry) => entry.name)
-    .sort();
+    .sort(compareSemanticVersions);
   if (versionDirs.length === 0) throw new Error('В static API нет ни одной версии');
   const validated = [];
   for (const versionDir of versionDirs) {
     validated.push(await validateManifest(path.join(apiDir, versionDir, 'manifest.json')));
   }
+  for (let index = 0; index < validated.length; index += 1) {
+    const currentRelease = validated[index];
+    const previousRelease = index === 0 ? null : validated[index - 1];
+    const expected = expectedDelta(previousRelease?.dataset ?? null, currentRelease.dataset);
+    const expectedPreviousVersion = previousRelease?.manifest.version ?? null;
+    const expectedBootstrap = previousRelease === null;
+    const expectedBaseline = expectedBootstrap ? 'empty' : 'previous-release';
+    if (currentRelease.delta.toVersion !== currentRelease.manifest.version
+        || currentRelease.delta.fromVersion !== expectedPreviousVersion
+        || currentRelease.delta.bootstrap !== expectedBootstrap
+        || currentRelease.delta.baseline !== expectedBaseline
+        || canonical(currentRelease.delta.added) !== canonical(expected.added)
+        || canonical(currentRelease.delta.removed) !== canonical(expected.removed)) {
+      throw new Error(`Delta ${currentRelease.manifest.version} не является точной разницей соседних datasets`);
+    }
+  }
   const current = validated.find(({ manifest }) => manifest.version === latest.version);
   if (!current
       || localPathForUrl(siteDir, latest.manifest) !== path.join(apiDir, `v${latest.version}`, 'manifest.json')
+      || latest.publishedAt !== current.manifest.publishedAt
+      || latest.schema !== current.manifest.schema
       || latest.dataset !== current.manifest.dataset.url
       || latest.delta !== current.manifest.delta.url
+      || canonical(latest.releaseAssets) !== canonical(current.manifest.releaseAssets)
       || JSON.stringify(latest.types) !== JSON.stringify(Object.fromEntries(
         Object.entries(current.manifest.types).map(([slug, artifact]) => [slug, artifact.url]),
       ))) {

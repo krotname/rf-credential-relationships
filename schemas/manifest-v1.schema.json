@@ -1,6 +1,6 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
-  "$id": "https://krotname.github.io/rf-vaultwarden-domain-rules/api/schema/manifest-v1.schema.json",
+  "$id": "https://krotname.github.io/rf-credential-relationships/api/schema/manifest-v1.schema.json",
   "title": "RF credential relationships API release manifest",
   "type": "object",
   "required": ["apiVersion", "version", "publishedAt", "schema", "dataset", "types", "delta", "releaseAssets"],
