@@ -213,12 +213,14 @@ export async function fetchWithTimeout(url, {
   redirect = 'manual',
   limiter = destinationLimiter,
   dispatcher = scanNetwork.dispatcher,
+  resolveUrl = scanNetwork.resolveUrl,
 } = {}) {
   let remainingMs = timeoutMs;
   let currentUrl = url;
   let redirectCount = 0;
   while (true) {
     const result = await limiter.run(currentUrl, undefined, async () => {
+      await resolveUrl(currentUrl);
       // Waiting for our own destination limit must not exhaust network time.
       if (remainingMs <= 0) throw new Error('Исчерпан тайм-аут цепочки redirects');
       const started = performance.now();
@@ -299,6 +301,7 @@ export async function readResponseBodyLimited(response, maxBytes) {
 }
 
 async function majesticCandidates(limit, timeoutMs) {
+  await scanNetwork.resolveUrl(MAJESTIC_URL);
   const response = await fetch(MAJESTIC_URL, {
     dispatcher: scanNetwork.dispatcher,
     headers: { 'user-agent': 'rf-credential-relationships/2.0' },
