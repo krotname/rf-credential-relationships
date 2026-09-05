@@ -26,10 +26,10 @@ export class DestinationLimiter {
     state.tail = new Promise((resolve) => { release = resolve; });
     try {
       await previous;
-      signal.throwIfAborted();
+      signal?.throwIfAborted();
       const wait = state.nextStart - Date.now();
       if (wait > 0) await delay(wait, undefined, { signal });
-      signal.throwIfAborted();
+      signal?.throwIfAborted();
       state.nextStart = Date.now() + this.intervalMs;
       return await operation();
     } finally {

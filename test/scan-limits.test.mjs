@@ -45,6 +45,23 @@ test('subdomains share start spacing; unrelated sites remain independent', async
   assert.ok(starts[2][1] - starts[0][1] >= 25);
 });
 
+test('destination queueing does not spend the following request network timeout', async () => {
+  const limiter = new DestinationLimiter({ intervalMs: 100 });
+  const originalFetch = globalThis.fetch;
+  globalThis.fetch = async (_url, { signal }) => {
+    signal.throwIfAborted();
+    return new Response('{}');
+  };
+  try {
+    assert.deepEqual(await Promise.all([
+      fetchWithTimeout('https://a.ru/aasa', { limiter, timeoutMs: 30 }),
+      fetchWithTimeout('https://a.ru/webauthn', { limiter, timeoutMs: 30 }),
+    ]), ['{}', '{}']);
+  } finally {
+    globalThis.fetch = originalFetch;
+  }
+});
+
 test('failed and expired queued requests release the slot without issuing traffic', async () => {
   const limiter = new DestinationLimiter({ intervalMs: 0 });
   const longSignal = AbortSignal.timeout(1000);

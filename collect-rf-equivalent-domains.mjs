@@ -212,47 +212,55 @@ export async function fetchWithTimeout(url, {
   redirect = 'manual',
   limiter = destinationLimiter,
 } = {}) {
-  const signal = AbortSignal.timeout(timeoutMs);
+  let remainingMs = timeoutMs;
   let currentUrl = url;
   let redirectCount = 0;
   while (true) {
-    const result = await limiter.run(currentUrl, signal, async () => {
-    const response = await fetch(currentUrl, {
-      headers: { 'user-agent': 'rf-credential-relationships/2.0', ...headers },
-      redirect: 'manual',
-      signal,
-    });
-    if (['follow', 'follow-https'].includes(redirect) && [301, 302, 303, 307, 308].includes(response.status)) {
-    const location = response.headers.get('location');
-    await response.body?.cancel();
-    if (!location) throw new Error(`redirect ${response.status} без Location`);
-    const nextUrl = new URL(location, currentUrl);
-    if (redirect === 'follow-https' && nextUrl.protocol !== 'https:') throw new Error('redirect вне HTTPS');
-    if (redirect === 'follow-https' && (nextUrl.username || nextUrl.password || !isPublicWebHostname(nextUrl.hostname))) {
-      throw new Error('redirect на непубличный hostname');
-    }
-    redirectCount += 1;
-    if (redirectCount > 10) throw new Error('слишком много redirects');
-    return { nextUrl: nextUrl.href };
-    }
-  const rejectResponse = async (message) => {
-    try {
-      await response.body?.cancel();
-    } catch {
-      // The response is already unusable; preserve the original rejection reason.
-    }
-    throw new Error(message);
-  };
-  if (!response.ok) return rejectResponse(`HTTP ${response.status}`);
-  const length = Number(response.headers.get('content-length') || 0);
-  if (length > maxBytes) return rejectResponse(`ответ больше ${maxBytes} байт`);
-  const contentType = (response.headers.get('content-type') || '').toLowerCase();
-  const mediaType = contentType.split(';', 1)[0].trim();
-  if (jsonOnly && (strictJsonContentType ? mediaType !== 'application/json' : !contentType.includes('json'))) {
-    return rejectResponse(`неверный Content-Type: ${contentType || 'пусто'}`);
-  }
-  const buffer = await readResponseBodyLimited(response, maxBytes);
-    return { text: new TextDecoder('utf-8', { fatal: false }).decode(buffer) };
+    const result = await limiter.run(currentUrl, undefined, async () => {
+      // Waiting for our own destination limit must not exhaust network time.
+      if (remainingMs <= 0) throw new Error('Исчерпан тайм-аут цепочки redirects');
+      const started = performance.now();
+      const signal = AbortSignal.timeout(Math.ceil(remainingMs));
+      try {
+        const response = await fetch(currentUrl, {
+          headers: { 'user-agent': 'rf-credential-relationships/2.0', ...headers },
+          redirect: 'manual',
+          signal,
+        });
+        if (['follow', 'follow-https'].includes(redirect) && [301, 302, 303, 307, 308].includes(response.status)) {
+          const location = response.headers.get('location');
+          await response.body?.cancel();
+          if (!location) throw new Error(`redirect ${response.status} без Location`);
+          const nextUrl = new URL(location, currentUrl);
+          if (redirect === 'follow-https' && nextUrl.protocol !== 'https:') throw new Error('redirect вне HTTPS');
+          if (redirect === 'follow-https' && (nextUrl.username || nextUrl.password || !isPublicWebHostname(nextUrl.hostname))) {
+            throw new Error('redirect на непубличный hostname');
+          }
+          redirectCount += 1;
+          if (redirectCount > 10) throw new Error('слишком много redirects');
+          return { nextUrl: nextUrl.href };
+        }
+        const rejectResponse = async (message) => {
+          try {
+            await response.body?.cancel();
+          } catch {
+            // Preserve the original rejection reason for an unusable response.
+          }
+          throw new Error(message);
+        };
+        if (!response.ok) return rejectResponse(`HTTP ${response.status}`);
+        const length = Number(response.headers.get('content-length') || 0);
+        if (length > maxBytes) return rejectResponse(`ответ больше ${maxBytes} байт`);
+        const contentType = (response.headers.get('content-type') || '').toLowerCase();
+        const mediaType = contentType.split(';', 1)[0].trim();
+        if (jsonOnly && (strictJsonContentType ? mediaType !== 'application/json' : !contentType.includes('json'))) {
+          return rejectResponse(`неверный Content-Type: ${contentType || 'пусто'}`);
+        }
+        const buffer = await readResponseBodyLimited(response, maxBytes);
+        return { text: new TextDecoder('utf-8', { fatal: false }).decode(buffer) };
+      } finally {
+        remainingMs -= performance.now() - started;
+      }
     });
     if (result.nextUrl) currentUrl = result.nextUrl;
     else return result.text;
