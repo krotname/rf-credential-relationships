@@ -8,6 +8,9 @@ import readline from 'node:readline';
 import { Readable } from 'node:stream';
 import { domainToASCII, fileURLToPath } from 'node:url';
 import { getDomain, parse as parseDomain } from 'tldts';
+import { DestinationLimiter, DiscoveryBudget, describeFetchError } from './scripts/scan-limits.mjs';
+
+const destinationLimiter = new DestinationLimiter();
 
 export const LOGIN_RELATION = 'delegate_permission/common.get_login_creds';
 
@@ -207,48 +210,61 @@ export async function fetchWithTimeout(url, {
   jsonOnly = false,
   strictJsonContentType = false,
   redirect = 'manual',
+  limiter = destinationLimiter,
 } = {}) {
-  const signal = AbortSignal.timeout(timeoutMs);
+  let remainingMs = timeoutMs;
   let currentUrl = url;
-  let response;
   let redirectCount = 0;
   while (true) {
-    response = await fetch(currentUrl, {
-      headers: { 'user-agent': 'rf-credential-relationships/2.0', ...headers },
-      redirect: redirect === 'follow-https' ? 'manual' : redirect,
-      signal,
+    const result = await limiter.run(currentUrl, undefined, async () => {
+      // Waiting for our own destination limit must not exhaust network time.
+      if (remainingMs <= 0) throw new Error('Исчерпан тайм-аут цепочки redirects');
+      const started = performance.now();
+      const signal = AbortSignal.timeout(Math.ceil(remainingMs));
+      try {
+        const response = await fetch(currentUrl, {
+          headers: { 'user-agent': 'rf-credential-relationships/2.0', ...headers },
+          redirect: 'manual',
+          signal,
+        });
+        if (['follow', 'follow-https'].includes(redirect) && [301, 302, 303, 307, 308].includes(response.status)) {
+          const location = response.headers.get('location');
+          await response.body?.cancel();
+          if (!location) throw new Error(`redirect ${response.status} без Location`);
+          const nextUrl = new URL(location, currentUrl);
+          if (redirect === 'follow-https' && nextUrl.protocol !== 'https:') throw new Error('redirect вне HTTPS');
+          if (redirect === 'follow-https' && (nextUrl.username || nextUrl.password || !isPublicWebHostname(nextUrl.hostname))) {
+            throw new Error('redirect на непубличный hostname');
+          }
+          redirectCount += 1;
+          if (redirectCount > 10) throw new Error('слишком много redirects');
+          return { nextUrl: nextUrl.href };
+        }
+        const rejectResponse = async (message) => {
+          try {
+            await response.body?.cancel();
+          } catch {
+            // Preserve the original rejection reason for an unusable response.
+          }
+          throw new Error(message);
+        };
+        if (!response.ok) return rejectResponse(`HTTP ${response.status}`);
+        const length = Number(response.headers.get('content-length') || 0);
+        if (length > maxBytes) return rejectResponse(`ответ больше ${maxBytes} байт`);
+        const contentType = (response.headers.get('content-type') || '').toLowerCase();
+        const mediaType = contentType.split(';', 1)[0].trim();
+        if (jsonOnly && (strictJsonContentType ? mediaType !== 'application/json' : !contentType.includes('json'))) {
+          return rejectResponse(`неверный Content-Type: ${contentType || 'пусто'}`);
+        }
+        const buffer = await readResponseBodyLimited(response, maxBytes);
+        return { text: new TextDecoder('utf-8', { fatal: false }).decode(buffer) };
+      } finally {
+        remainingMs -= performance.now() - started;
+      }
     });
-    if (redirect !== 'follow-https' || response.status < 300 || response.status >= 400) break;
-    const location = response.headers.get('location');
-    await response.body?.cancel();
-    if (!location) throw new Error(`redirect ${response.status} без Location`);
-    const nextUrl = new URL(location, currentUrl);
-    if (nextUrl.protocol !== 'https:') throw new Error('redirect вне HTTPS');
-    if (nextUrl.username || nextUrl.password || !isPublicWebHostname(nextUrl.hostname)) {
-      throw new Error('redirect на непубличный hostname');
-    }
-    redirectCount += 1;
-    if (redirectCount > 10) throw new Error('слишком много redirects');
-    currentUrl = nextUrl.href;
+    if (result.nextUrl) currentUrl = result.nextUrl;
+    else return result.text;
   }
-  const rejectResponse = async (message) => {
-    try {
-      await response.body?.cancel();
-    } catch {
-      // The response is already unusable; preserve the original rejection reason.
-    }
-    throw new Error(message);
-  };
-  if (!response.ok) return rejectResponse(`HTTP ${response.status}`);
-  const length = Number(response.headers.get('content-length') || 0);
-  if (length > maxBytes) return rejectResponse(`ответ больше ${maxBytes} байт`);
-  const contentType = (response.headers.get('content-type') || '').toLowerCase();
-  const mediaType = contentType.split(';', 1)[0].trim();
-  if (jsonOnly && (strictJsonContentType ? mediaType !== 'application/json' : !contentType.includes('json'))) {
-    return rejectResponse(`неверный Content-Type: ${contentType || 'пусто'}`);
-  }
-  const buffer = await readResponseBodyLimited(response, maxBytes);
-  return new TextDecoder('utf-8', { fatal: false }).decode(buffer);
 }
 
 export async function readResponseBodyLimited(response, maxBytes) {
@@ -497,7 +513,7 @@ async function fetchAssetLinks(origin, options, cache) {
     const declarations = extractCredentialDeclarations(JSON.parse(text), origin);
     entry = { checkedAt, status: 'ok', declarations };
   } catch (error) {
-    entry = { checkedAt, status: 'rejected', error: error.message };
+    entry = { checkedAt, status: 'rejected', error: describeFetchError(error) };
   }
   cache.entries[url] = entry;
   return { ...entry, cached: false };
@@ -526,7 +542,7 @@ async function fetchAssociation(origin, kind, options, cache) {
       : extractWebAuthnRelatedOrigins(payload);
     entry = { checkedAt, status: 'ok', values };
   } catch (error) {
-    entry = { checkedAt, status: 'rejected', error: error.message };
+    entry = { checkedAt, status: 'rejected', error: describeFetchError(error) };
   }
   cache.entries[url] = entry;
   return { ...entry, cached: false };
@@ -560,7 +576,7 @@ async function crawlAssetLinks(candidateDomains, options, cache) {
     }
   }
   const initialOrigins = queued.size;
-  const totalOriginLimit = initialOrigins + options.maxDiscovered;
+  const discovery = new DiscoveryBudget([...queued], options.maxDiscovered);
   const batchSize = Math.max(100, options.concurrency * 10);
   process.stderr.write(
     `План: доменов рейтинга — ${candidateDomains.length}; первичных HTTPS-origin — ${initialOrigins}; ` +
@@ -580,12 +596,11 @@ async function crawlAssetLinks(candidateDomains, options, cache) {
     for (const [origin, result] of batchResults) records.set(origin, result);
     await atomicWrite(options.cachePath, `${JSON.stringify(cache)}\n`);
 
-    for (const [, result] of batchResults) {
+    for (const [origin, result] of batchResults) {
       if (result.status !== 'ok') continue;
       for (const declaration of result.declarations.web) {
         const target = declaration.origin;
-        if (!queued.has(target) && queued.size < totalOriginLimit) {
-          queued.add(target);
+        if (discovery.accept(origin, target)) {
           pending.push(target);
         }
       }
@@ -820,7 +835,7 @@ export function parseAppleShared(text) {
     .filter((group) => group.length > 1);
 }
 
-async function loadCatalogs(options) {
+export async function loadCatalogs(options) {
   if (!options.catalogs) return { bitwarden: [], apple: [], errors: [] };
   const errors = [];
   const [bitwardenResult, appleResult] = await Promise.allSettled([
@@ -830,9 +845,9 @@ async function loadCatalogs(options) {
   let bitwarden = [];
   let apple = [];
   if (bitwardenResult.status === 'fulfilled') bitwarden = parseBitwardenGlobal(bitwardenResult.value);
-  else errors.push(`Bitwarden: ${bitwardenResult.reason.message}`);
+  else errors.push(`Bitwarden: ${describeFetchError(bitwardenResult.reason)}`);
   if (appleResult.status === 'fulfilled') apple = parseAppleShared(appleResult.value);
-  else errors.push(`Apple: ${appleResult.reason.message}`);
+  else errors.push(`Apple: ${describeFetchError(appleResult.reason)}`);
   return { bitwarden, apple, errors };
 }
 
@@ -932,6 +947,9 @@ async function writeResults(options, metadata, candidateRanks, records, analysis
       catalogs: options.catalogs,
       checkWww: options.checkWww,
       maxDiscovered: options.maxDiscovered,
+      maxDiscoveredPerSource: 100,
+      destinationConcurrency: 1,
+      destinationIntervalMs: 250,
       associations: options.associations,
       allowPrereleaseApps: options.allowPrereleaseApps,
     },
@@ -959,6 +977,14 @@ async function writeResults(options, metadata, candidateRanks, records, analysis
     unrepresentableWebLinks: analysis.unrepresentableWebLinks,
     rejectedAndroidApps: analysis.rejectedApps,
     catalogErrors: catalogs.errors,
+    fetchErrors: Object.fromEntries(['dal', 'aasa', 'webauthn'].map((kind) => {
+      const source = kind === 'dal' ? records : associationRecords[kind];
+      const counts = new Map();
+      for (const record of source.values()) {
+        if (record.error) counts.set(record.error, (counts.get(record.error) || 0) + 1);
+      }
+      return [kind, [...counts].sort((a, b) => b[1] - a[1]).slice(0, 20)];
+    })),
   };
   await atomicWrite(evidencePath, `${JSON.stringify(evidence, null, 2)}\n`);
   return { readyPath, jsonPath, evidencePath, relationshipsPath, ready, evidence, relationships };
@@ -971,10 +997,8 @@ export async function run(options) {
   const candidateResult = await loadCandidates(options);
   const candidateRanks = new Map(candidateResult.domains.map((domain, index) => [domain, index + 1]));
   process.stderr.write(`Кандидатов: ${candidateRanks.size}; источник: ${candidateResult.source}\n`);
-  const [records, catalogs] = await Promise.all([
-    crawlAssetLinks(candidateResult.domains, options, cache),
-    loadCatalogs(options),
-  ]);
+  const catalogs = await loadCatalogs(options);
+  const records = await crawlAssetLinks(candidateResult.domains, options, cache);
   const associationRecords = await crawlAssociations([...records.keys()], options, cache);
   const analysis = buildDalGroups(records, candidateRanks, options);
   const relations = buildTypedRelations(records, associationRecords, options);

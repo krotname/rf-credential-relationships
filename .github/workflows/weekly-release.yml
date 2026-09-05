@@ -62,7 +62,11 @@ jobs:
           github-token: ${{ github.token }}
       - name: Collect fresh public evidence
         if: steps.state.outputs.skip != 'true' && steps.state.outputs.resume != 'true' && inputs.scan_run_id == ''
-        run: node collect-rf-equivalent-domains.mjs --source majestic --limit 1000000 --concurrency 400 --max-discovered 100000 --refresh
+        env:
+          UV_THREADPOOL_SIZE: 64
+        run: |
+          node scripts/check-scan-network.mjs
+          node collect-rf-equivalent-domains.mjs --source majestic --limit 1000000 --concurrency 400 --max-discovered 100000 --refresh
       - name: Preserve completed scan for retries
         if: steps.state.outputs.skip != 'true' && steps.state.outputs.resume != 'true'
         uses: actions/upload-artifact@v7
