@@ -1,0 +1,36 @@
+name: Ошибка в данных
+description: Сообщить о неверной или устаревшей связи
+title: "data: "
+labels: [bug]
+body:
+  - type: input
+    id: relation
+    attributes:
+      label: Связь
+      description: Укажите source и target.
+    validations:
+      required: true
+  - type: dropdown
+    id: type
+    attributes:
+      label: Тип
+      options:
+        - dal_web_credentials
+        - dal_android_credentials
+        - apple_webcredentials
+        - webauthn_related_origin
+    validations:
+      required: true
+  - type: input
+    id: evidence
+    attributes:
+      label: Публичное доказательство
+      description: URL well-known файла или другого проверяемого источника.
+    validations:
+      required: true
+  - type: textarea
+    id: details
+    attributes:
+      label: Что неверно
+    validations:
+      required: true
