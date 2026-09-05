@@ -5,8 +5,8 @@
 ## Полный прогон
 
 ```powershell
-git clone https://github.com/krotname/rf-vaultwarden-domain-rules.git
-Set-Location .\rf-vaultwarden-domain-rules
+git clone https://github.com/krotname/rf-credential-relationships.git
+Set-Location .\rf-credential-relationships
 .\run-rf-scan.ps1 -Source majestic -Limit 1000000 -Concurrency 400 -MaxDiscovered 100000
 npm test
 ```
@@ -40,27 +40,27 @@ npm test
 
 ## Статический API
 
-Read-only API публикуется на GitHub Pages без backend, авторизации и секретов. Стабильная точка входа — [`latest.json`](https://krotname.github.io/rf-vaultwarden-domain-rules/api/latest.json); она указывает на неизменяемый каталог версии, JSON Schema, полный dataset, четыре предсобранных фильтра и delta.
+Read-only API публикуется на GitHub Pages без backend, авторизации и секретов. Стабильная точка входа — [`latest.json`](https://krotname.github.io/rf-credential-relationships/api/latest.json); она указывает на неизменяемый каталог версии, JSON Schema, полный dataset, четыре предсобранных фильтра и delta.
 
 | Представление | URL |
 |---|---|
-| Последняя версия | `https://krotname.github.io/rf-vaultwarden-domain-rules/api/latest.json` |
-| Манифест v2.0.0 | `https://krotname.github.io/rf-vaultwarden-domain-rules/api/v2.0.0/manifest.json` |
-| Все связи | `https://krotname.github.io/rf-vaultwarden-domain-rules/api/v2.0.0/relationships.json` |
-| DAL web | `https://krotname.github.io/rf-vaultwarden-domain-rules/api/v2.0.0/types/dal-web.json` |
-| DAL Android | `https://krotname.github.io/rf-vaultwarden-domain-rules/api/v2.0.0/types/dal-android.json` |
-| Apple AASA | `https://krotname.github.io/rf-vaultwarden-domain-rules/api/v2.0.0/types/aasa-webcredentials.json` |
-| WebAuthn | `https://krotname.github.io/rf-vaultwarden-domain-rules/api/v2.0.0/types/webauthn-related-origins.json` |
-| Delta | `https://krotname.github.io/rf-vaultwarden-domain-rules/api/v2.0.0/delta-from-previous.json` |
-| JSON Schema | `https://krotname.github.io/rf-vaultwarden-domain-rules/api/schema/relationships-v1.schema.json` |
+| Последняя версия | `https://krotname.github.io/rf-credential-relationships/api/latest.json` |
+| Манифест v2.0.0 | `https://krotname.github.io/rf-credential-relationships/api/v2.0.0/manifest.json` |
+| Все связи | `https://krotname.github.io/rf-credential-relationships/api/v2.0.0/relationships.json` |
+| DAL web | `https://krotname.github.io/rf-credential-relationships/api/v2.0.0/types/dal-web.json` |
+| DAL Android | `https://krotname.github.io/rf-credential-relationships/api/v2.0.0/types/dal-android.json` |
+| Apple AASA | `https://krotname.github.io/rf-credential-relationships/api/v2.0.0/types/aasa-webcredentials.json` |
+| WebAuthn | `https://krotname.github.io/rf-credential-relationships/api/v2.0.0/types/webauthn-related-origins.json` |
+| Delta | `https://krotname.github.io/rf-credential-relationships/api/v2.0.0/delta-from-previous.json` |
+| JSON Schema | `https://krotname.github.io/rf-credential-relationships/api/schema/relationships-v1.schema.json` |
 
 ```bash
-curl -fsSL https://krotname.github.io/rf-vaultwarden-domain-rules/api/latest.json | jq '{version,dataset,types,delta}'
-curl -fsSL https://krotname.github.io/rf-vaultwarden-domain-rules/api/v2.0.0/types/dal-web.json | jq '.statistics'
+curl -fsSL https://krotname.github.io/rf-credential-relationships/api/latest.json | jq '{version,dataset,types,delta}'
+curl -fsSL https://krotname.github.io/rf-credential-relationships/api/v2.0.0/types/dal-web.json | jq '.statistics'
 ```
 
 ```powershell
-$latest = Invoke-RestMethod 'https://krotname.github.io/rf-vaultwarden-domain-rules/api/latest.json'
+$latest = Invoke-RestMethod 'https://krotname.github.io/rf-credential-relationships/api/latest.json'
 $dalAndroid = Invoke-RestMethod $latest.types.'dal-android'
 $dalAndroid.statistics
 ```
@@ -68,3 +68,5 @@ $dalAndroid.statistics
 Версия в URL следует SemVer версии набора данных. Файлы внутри уже опубликованного `vX.Y.Z` не меняются; `latest.json` переключается только на новый проверенный выпуск. Добавление полей совместимо в пределах текущей JSON Schema, удаление/переименование полей или изменение их смысла требует новой major-версии schema/API.
 
 Для первого поддерживаемого выпуска delta имеет `fromVersion: null`, `bootstrap: true` и `baseline: "empty"`: все текущие связи находятся в `added`, а `removed` пуст. Начиная со второго выпуска delta сравнивает точные объекты с предыдущей поддерживаемой версией. Производные JSON не хранятся в Git: workflow скачивает immutable release asset, проверяет SHA-256, строит endpoints и валидирует их схемами перед публикацией.
+
+SHA-256 каждого versioned API artifact закреплён в `api/releases.json`: обычная сборка завершается ошибкой при любом изменении ранее опубликованных байтов. Для нового выпуска сначала получают кандидаты locks командой `npm run build:api -- --no-verify-locks --print-locks`, затем проверяют и добавляют их в release config; CI всегда запускает сборку с обязательной проверкой locks. Валидатор независимо пересчитывает bootstrap или точную разницу с соседним dataset и не доверяет самозаявленным delta-счётчикам.

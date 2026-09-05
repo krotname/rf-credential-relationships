@@ -20,7 +20,7 @@ const APPLE_SHARED_URL =
 const RUSSIAN_SUFFIXES = new Set(['ru', 'su', 'xn--p1ai']);
 const MAX_ASSETLINKS_BYTES = 1024 * 1024;
 const MAX_ASSOCIATION_BYTES = 1024 * 1024;
-const CACHE_VERSION = 1;
+const CACHE_VERSION = 2;
 const BLOCKED_APP_PARTS = new Set([
   'acceptance', 'adhoc', 'alpha', 'beta', 'broteam', 'canary', 'corplogin', 'debug', 'demo', 'dev',
   'development', 'dogfood', 'internal', 'pr', 'preprod', 'preview', 'proddebug',
@@ -201,7 +201,7 @@ export function parseCsvLine(line) {
 }
 
 export async function fetchWithTimeout(url, {
-  timeoutMs,
+  timeoutMs = 7000,
   headers = {},
   maxBytes = 8 * 1024 * 1024,
   jsonOnly = false,
@@ -214,7 +214,7 @@ export async function fetchWithTimeout(url, {
   let redirectCount = 0;
   while (true) {
     response = await fetch(currentUrl, {
-      headers: { 'user-agent': 'rf-vaultwarden-domain-rules/2.0', ...headers },
+      headers: { 'user-agent': 'rf-credential-relationships/2.0', ...headers },
       redirect: redirect === 'follow-https' ? 'manual' : redirect,
       signal,
     });
@@ -281,7 +281,7 @@ export async function readResponseBodyLimited(response, maxBytes) {
 
 async function majesticCandidates(limit, timeoutMs) {
   const response = await fetch(MAJESTIC_URL, {
-    headers: { 'user-agent': 'rf-vaultwarden-domain-rules/2.0' },
+    headers: { 'user-agent': 'rf-credential-relationships/2.0' },
     redirect: 'follow',
     signal: AbortSignal.timeout(Math.max(timeoutMs, 120000)),
   });
@@ -402,7 +402,9 @@ export function extractCredentialDeclarations(payload, sourceOrigin) {
     } else if (target?.namespace === 'android_app') {
       const packageName = typeof target.package_name === 'string' ? target.package_name.trim() : '';
       const fingerprints = Array.isArray(target.sha256_cert_fingerprints)
-        ? target.sha256_cert_fingerprints.filter(isValidSha256Fingerprint)
+        ? target.sha256_cert_fingerprints
+          .filter(isValidSha256Fingerprint)
+          .map((fingerprint) => fingerprint.trim().toUpperCase())
         : [];
       if (/^[A-Za-z][A-Za-z0-9_]*(?:\.[A-Za-z0-9_]+)+$/.test(packageName) && fingerprints.length) {
         android.push({ packageName, fingerprints, sourceOrigin });
@@ -413,7 +415,7 @@ export function extractCredentialDeclarations(payload, sourceOrigin) {
     web: [...new Map(web.map((item) => [item.origin, item])).values()],
     android: [...android.reduce((items, item) => {
       const existing = items.get(item.packageName);
-      if (existing) existing.fingerprints = [...new Set([...existing.fingerprints, ...item.fingerprints])];
+      if (existing) existing.fingerprints = [...new Set([...existing.fingerprints, ...item.fingerprints])].sort();
       else items.set(item.packageName, item);
       return items;
     }, new Map()).values()],
@@ -757,7 +759,9 @@ export function buildTypedRelations(records, associationRecords, { allowPrerelea
         target: `androidapp://${declaration.packageName}`,
         evidenceUrl,
         observedAt: record.checkedAt,
-        fingerprints: [...new Set(declaration.fingerprints)].sort(),
+        fingerprints: [...new Set(declaration.fingerprints
+          .filter(isValidSha256Fingerprint)
+          .map((fingerprint) => fingerprint.trim().toUpperCase()))].sort(),
       });
     }
   }

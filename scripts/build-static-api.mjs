@@ -34,6 +34,22 @@ function canonical(value) {
   return JSON.stringify(value);
 }
 
+function compareSemanticVersions(left, right) {
+  const leftParts = left.split('.').map(Number);
+  const rightParts = right.split('.').map(Number);
+  for (let index = 0; index < 3; index += 1) {
+    if (leftParts[index] !== rightParts[index]) return leftParts[index] - rightParts[index];
+  }
+  return 0;
+}
+
+function assertArtifactLock(release, actual) {
+  if (!release.apiArtifacts) throw new Error(`Для ${release.version} отсутствует apiArtifacts lock`);
+  if (canonical(release.apiArtifacts) !== canonical(actual)) {
+    throw new Error(`API artifacts ${release.version} не совпадают с immutable lock`);
+  }
+}
+
 async function writeBytes(file, bytes) {
   await fs.mkdir(path.dirname(file), { recursive: true });
   await fs.writeFile(file, bytes);
@@ -72,8 +88,15 @@ async function loadSource(release, sourceOverrides, fetchImpl) {
   if (override) {
     bytes = await fs.readFile(override);
   } else {
+    const sourceUrl = new URL(release.relationships.url);
+    if (sourceUrl.protocol !== 'https:' || sourceUrl.username || sourceUrl.password) {
+      throw new Error(`Release asset ${release.version} должен использовать HTTPS без credentials`);
+    }
     const response = await fetchImpl(release.relationships.url, { redirect: 'follow' });
     if (!response.ok) throw new Error(`Не удалось скачать ${release.relationships.url}: HTTP ${response.status}`);
+    if (response.url && new URL(response.url).protocol !== 'https:') {
+      throw new Error(`Release asset ${release.version} перенаправлен вне HTTPS`);
+    }
     const length = Number(response.headers.get('content-length') || 0);
     if (length > 20 * 1024 * 1024) throw new Error(`Release asset ${release.version} больше 20 MiB`);
     bytes = Buffer.from(await response.arrayBuffer());
@@ -126,19 +149,32 @@ export async function buildStaticApi({
   schemaDir = path.join(PROJECT_ROOT, 'schemas'),
   sourceOverrides = new Map(),
   fetchImpl = fetch,
+  verifyArtifactLocks = true,
 } = {}) {
   const config = JSON.parse(await fs.readFile(configPath, 'utf8'));
   if (config.schemaVersion !== 1 || !config.baseUrl || !Array.isArray(config.releases) || config.releases.length === 0) {
     throw new Error('Некорректный api/releases.json');
   }
+  const baseUrl = new URL(config.baseUrl);
+  if (baseUrl.protocol !== 'https:' || baseUrl.username || baseUrl.password || baseUrl.search || baseUrl.hash) {
+    throw new Error('baseUrl должен быть HTTPS URL без credentials, query и fragment');
+  }
   const versions = new Set();
-  for (const release of config.releases) {
+  for (let index = 0; index < config.releases.length; index += 1) {
+    const release = config.releases[index];
     if (!/^\d+\.\d+\.\d+$/.test(release.version) || versions.has(release.version)) {
       throw new Error(`Некорректная или повторная версия: ${release.version}`);
+    }
+    if (index > 0 && compareSemanticVersions(config.releases[index - 1].version, release.version) >= 0) {
+      throw new Error('Версии в api/releases.json должны строго возрастать по SemVer');
     }
     versions.add(release.version);
   }
 
+  outDir = path.resolve(outDir);
+  if (outDir === path.parse(outDir).root || outDir === PROJECT_ROOT) {
+    throw new Error(`Небезопасный каталог --out: ${outDir}`);
+  }
   await fs.rm(outDir, { recursive: true, force: true });
   const apiDir = path.join(outDir, 'api');
   const schemaOut = path.join(apiDir, 'schema');
@@ -149,6 +185,7 @@ export async function buildStaticApi({
   for (const release of config.releases) loaded.push({ release, ...(await loadSource(release, sourceOverrides, fetchImpl)) });
 
   const manifests = [];
+  const artifactLocks = {};
   for (let index = 0; index < loaded.length; index += 1) {
     const { release, bytes, dataset } = loaded[index];
     const versionDir = path.join(apiDir, `v${release.version}`);
@@ -195,7 +232,15 @@ export async function buildStaticApi({
       },
       releaseAssets: release.releaseAssets,
     };
-    await writeBytes(path.join(versionDir, 'manifest.json'), jsonBytes(manifest));
+    const manifestMeta = await writeBytes(path.join(versionDir, 'manifest.json'), jsonBytes(manifest));
+    const actualLock = {
+      relationships: { sha256: datasetMeta.sha256 },
+      manifest: { sha256: manifestMeta.sha256 },
+      delta: { sha256: deltaMeta.sha256 },
+      types: Object.fromEntries(Object.entries(types).map(([slug, artifact]) => [slug, { sha256: artifact.sha256 }])),
+    };
+    artifactLocks[release.version] = actualLock;
+    if (verifyArtifactLocks) assertArtifactLock(release, actualLock);
     manifests.push(manifest);
   }
 
@@ -213,17 +258,19 @@ export async function buildStaticApi({
   };
   await writeBytes(path.join(apiDir, 'latest.json'), jsonBytes(latest));
   await writeBytes(path.join(outDir, '.nojekyll'), Buffer.alloc(0));
-  const html = `<!doctype html>\n<meta charset="utf-8">\n<title>RF credential relationships API</title>\n<h1>RF credential relationships API</h1>\n<p><a href="api/latest.json">latest.json</a> · <a href="${latest.manifest}">v${latest.version} manifest</a> · <a href="https://github.com/krotname/rf-vaultwarden-domain-rules">documentation</a></p>\n`;
+  const html = `<!doctype html>\n<meta charset="utf-8">\n<title>RF credential relationships API</title>\n<h1>RF credential relationships API</h1>\n<p><a href="api/latest.json">latest.json</a> · <a href="${latest.manifest}">v${latest.version} manifest</a> · <a href="https://github.com/krotname/rf-credential-relationships">documentation</a></p>\n`;
   await writeBytes(path.join(outDir, 'index.html'), Buffer.from(html, 'utf8'));
-  return { outDir, latest, manifests };
+  return { outDir, latest, manifests, artifactLocks };
 }
 
 function parseCli(argv) {
-  const options = { sourceOverrides: new Map() };
+  const options = { sourceOverrides: new Map(), printLocks: false };
   for (let index = 0; index < argv.length; index += 1) {
     const argument = argv[index];
     if (argument === '--out') options.outDir = path.resolve(argv[++index]);
     else if (argument === '--config') options.configPath = path.resolve(argv[++index]);
+    else if (argument === '--no-verify-locks') options.verifyArtifactLocks = false;
+    else if (argument === '--print-locks') options.printLocks = true;
     else if (argument === '--source') {
       const [version, ...fileParts] = argv[++index].split('=');
       if (!version || fileParts.length === 0) throw new Error('--source ожидает VERSION=FILE');
@@ -234,6 +281,8 @@ function parseCli(argv) {
 }
 
 if (process.argv[1] && import.meta.url === pathToFileURL(path.resolve(process.argv[1])).href) {
-  const result = await buildStaticApi(parseCli(process.argv.slice(2)));
+  const options = parseCli(process.argv.slice(2));
+  const result = await buildStaticApi(options);
   process.stdout.write(`Static API: ${result.outDir}\nLatest: ${result.latest.version}\n`);
+  if (options.printLocks) process.stdout.write(`${JSON.stringify(result.artifactLocks, null, 2)}\n`);
 }

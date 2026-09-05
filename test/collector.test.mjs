@@ -61,13 +61,14 @@ test('extracts only credential-sharing declarations', () => {
 
 test('merges certificates declared separately for the same Android package', () => {
   const secondFingerprint = VALID_FINGERPRINT.replace(/^00/, 'FF');
+  const lowerCaseDuplicate = `  ${VALID_FINGERPRINT.toLowerCase()}  `;
   const result = extractCredentialDeclarations([
     {
       relation: ['delegate_permission/common.get_login_creds'],
       target: {
         namespace: 'android_app',
         package_name: 'ru.example.app',
-        sha256_cert_fingerprints: [VALID_FINGERPRINT],
+        sha256_cert_fingerprints: [VALID_FINGERPRINT, lowerCaseDuplicate],
       },
     },
     {
@@ -79,7 +80,7 @@ test('merges certificates declared separately for the same Android package', () 
       },
     },
   ], 'https://example.ru');
-  assert.deepEqual(result.android[0].fingerprints, [VALID_FINGERPRINT, secondFingerprint]);
+  assert.deepEqual(result.android[0].fingerprints, [VALID_FINGERPRINT.toUpperCase(), secondFingerprint.toUpperCase()]);
 });
 
 test('extracts Apple and WebAuthn associations conservatively', () => {
