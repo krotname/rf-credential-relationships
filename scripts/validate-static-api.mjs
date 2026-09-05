@@ -68,6 +68,7 @@ function localPathForUrl(siteDir, value) {
 }
 
 export async function validateStaticApi({ siteDir = path.join(PROJECT_ROOT, 'site') } = {}) {
+  siteDir = path.resolve(siteDir);
   const schemaDir = path.join(siteDir, 'api', 'schema');
   const schemaNames = ['relationships-v1', 'manifest-v1', 'latest-v1', 'delta-v1'];
   const schemas = await Promise.all(schemaNames.map((name) => readJson(path.join(schemaDir, `${name}.schema.json`))));

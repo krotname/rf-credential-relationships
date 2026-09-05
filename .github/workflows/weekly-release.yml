@@ -4,6 +4,11 @@ on:
   schedule:
     - cron: '17 3 * * 0'
   workflow_dispatch:
+    inputs:
+      scan_run_id:
+        description: 'Необязательно: ID прежнего запуска со свежим scan-results (не старше суток)'
+        type: string
+        required: false
 
 permissions:
   contents: read
@@ -19,6 +24,7 @@ jobs:
     timeout-minutes: 90
     permissions:
       contents: write
+      actions: read
     steps:
       - uses: actions/checkout@v7
         with:
@@ -41,9 +47,33 @@ jobs:
           else
             node scripts/release-index.mjs --prepare
           fi
+      - name: Validate baseline before scanning
+        if: steps.state.outputs.skip != 'true'
+        run: |
+          npm run build:api -- --config .local/releases.json
+          npm run validate:api
+      - name: Restore a completed scan
+        if: steps.state.outputs.skip != 'true' && steps.state.outputs.resume != 'true' && inputs.scan_run_id != ''
+        uses: actions/download-artifact@v8
+        with:
+          name: scan-results
+          path: out
+          run-id: ${{ inputs.scan_run_id }}
+          github-token: ${{ github.token }}
       - name: Collect fresh public evidence
+        if: steps.state.outputs.skip != 'true' && steps.state.outputs.resume != 'true' && inputs.scan_run_id == ''
+        run: node collect-rf-equivalent-domains.mjs --source majestic --limit 1000000 --concurrency 400 --max-discovered 100000 --refresh
+      - name: Preserve completed scan for retries
         if: steps.state.outputs.skip != 'true' && steps.state.outputs.resume != 'true'
-        run: node collect-rf-equivalent-domains.mjs --source majestic --limit 1000000 --concurrency 200 --max-discovered 100000 --refresh
+        uses: actions/upload-artifact@v7
+        with:
+          name: scan-results
+          path: |
+            out/relationships.json
+            out/evidence.json
+            out/vaultwarden-equivalent-domains.txt
+          if-no-files-found: error
+          retention-days: 3
       - name: Prepare and validate immutable artifacts
         if: steps.state.outputs.skip != 'true' && steps.state.outputs.resume != 'true'
         run: node scripts/prepare-release.mjs

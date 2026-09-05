@@ -157,6 +157,7 @@ test('builds and validates filtered static endpoints with bootstrap delta', asyn
   await buildStaticApi({ configPath, outDir: siteDir, sourceOverrides: new Map([['1.0.0', release.file]]) });
   const result = await validateStaticApi({ siteDir });
   assert.deepEqual(result, { version: '1.0.0', count: 4 });
+  assert.deepEqual(await validateStaticApi({ siteDir: path.relative(process.cwd(), siteDir) }), result);
   const latest = JSON.parse(await fs.readFile(path.join(siteDir, 'api', 'latest.json'), 'utf8'));
   assert.equal(Object.keys(latest.types).length, 4);
   const delta = JSON.parse(await fs.readFile(path.join(siteDir, 'api', 'v1.0.0', 'delta-from-previous.json'), 'utf8'));
