@@ -1,0 +1,14 @@
+changelog:
+  exclude:
+    labels: [duplicate, invalid, wontfix]
+  categories:
+    - title: Исправления
+      labels: [bug]
+    - title: Данные и API
+      labels: [data, api]
+    - title: Зависимости и сборка
+      labels: [dependencies, github_actions, release]
+    - title: Документация
+      labels: [documentation]
+    - title: Другие изменения
+      labels: ['*']

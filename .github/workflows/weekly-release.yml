@@ -1,0 +1,62 @@
+name: Weekly release
+
+on:
+  schedule:
+    - cron: '17 3 * * 0'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: weekly-release
+  cancel-in-progress: false
+
+jobs:
+  release:
+    if: github.ref == 'refs/heads/main'
+    runs-on: ubuntu-latest
+    timeout-minutes: 90
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@v7
+        with:
+          node-version: 22
+          cache: npm
+      - run: npm ci
+      - run: npm test
+      - run: pwsh -NoProfile -File ./test/powershell-wrapper.test.ps1
+      - name: Resolve release state
+        id: state
+        env:
+          GH_TOKEN: ${{ github.token }}
+          EVENT_NAME: ${{ github.event_name }}
+        run: |
+          if [ "$EVENT_NAME" = schedule ]; then
+            node scripts/release-index.mjs --prepare --weekly
+          else
+            node scripts/release-index.mjs --prepare
+          fi
+      - name: Collect fresh public evidence
+        if: steps.state.outputs.skip != 'true' && steps.state.outputs.resume != 'true'
+        run: node collect-rf-equivalent-domains.mjs --source majestic --limit 1000000 --concurrency 200 --max-discovered 100000 --refresh
+      - name: Prepare and validate immutable artifacts
+        if: steps.state.outputs.skip != 'true' && steps.state.outputs.resume != 'true'
+        run: node scripts/prepare-release.mjs
+      - name: Publish verified release
+        if: steps.state.outputs.skip != 'true'
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: node scripts/publish-release.mjs
+
+  deploy:
+    needs: release
+    permissions:
+      contents: read
+      pages: write
+      id-token: write
+    uses: ./.github/workflows/pages.yml

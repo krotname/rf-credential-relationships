@@ -1,7 +1,7 @@
 name: Ошибка в данных
 description: Сообщить о неверной или устаревшей связи
 title: "data: "
-labels: [bug]
+labels: [bug, data]
 body:
   - type: input
     id: relation
