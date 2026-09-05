@@ -1,0 +1,43 @@
+{
+  "schemaVersion": 1,
+  "baseUrl": "https://krotname.github.io/rf-vaultwarden-domain-rules",
+  "releases": [
+    {
+      "version": "2.0.0",
+      "publishedAt": "2026-09-04T23:41:21Z",
+      "relationships": {
+        "url": "https://github.com/krotname/rf-vaultwarden-domain-rules/releases/download/v2.0.0/rf-credential-relationships-v2.0.0.json",
+        "sha256": "3ccad7da6cd1b1652e22e15c7057ac2eeb45d29b88ffc2e79fa5b6183b36f02e"
+      },
+      "expectedCounts": {
+        "totalRelations": 2437,
+        "relationsByType": {
+          "dal_web_credentials": 1571,
+          "dal_android_credentials": 252,
+          "apple_webcredentials": 459,
+          "webauthn_related_origin": 155
+        }
+      },
+      "releaseAssets": {
+        "relationships": {
+          "url": "https://github.com/krotname/rf-vaultwarden-domain-rules/releases/download/v2.0.0/rf-credential-relationships-v2.0.0.json",
+          "sha256": "3ccad7da6cd1b1652e22e15c7057ac2eeb45d29b88ffc2e79fa5b6183b36f02e"
+        },
+        "evidence": {
+          "url": "https://github.com/krotname/rf-vaultwarden-domain-rules/releases/download/v2.0.0/rf-scan-evidence-v2.0.0.json",
+          "sha256": "9bfcb6fd3114866c3633d34063b88d0fa395776f8a7af7fe25a1fb91c54f7248"
+        },
+        "vaultwarden": {
+          "url": "https://github.com/krotname/rf-vaultwarden-domain-rules/releases/download/v2.0.0/vaultwarden-equivalent-domains-v2.0.0.txt",
+          "sha256": "7fe18b75addd7e9a9ce755f20a45fbb0c0f79872c4a6e654f8c3d9f14a52f987",
+          "groups": 54,
+          "entries": 230
+        },
+        "checksums": {
+          "url": "https://github.com/krotname/rf-vaultwarden-domain-rules/releases/download/v2.0.0/SHA256SUMS.txt",
+          "sha256": "0b9272b46f3f6a7b5f0cb306bdf6c83b95bc9e8506461f88eed1c9a06dd79c62"
+        }
+      }
+    }
+  ]
+}

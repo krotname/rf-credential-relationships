@@ -1,0 +1,113 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://krotname.github.io/rf-vaultwarden-domain-rules/api/schema/relationships-v1.schema.json",
+  "title": "RF credential relationships dataset",
+  "type": "object",
+  "required": ["schemaVersion", "generatedAt", "ranking", "statistics", "relations"],
+  "properties": {
+    "schemaVersion": { "const": 1 },
+    "generatedAt": { "type": "string", "format": "date-time" },
+    "ranking": {
+      "type": "object",
+      "required": ["source", "domains"],
+      "properties": {
+        "source": { "type": "string", "format": "uri" },
+        "domains": { "type": "integer", "minimum": 0 }
+      },
+      "additionalProperties": true
+    },
+    "statistics": { "$ref": "#/$defs/statistics" },
+    "relations": {
+      "type": "array",
+      "items": { "$ref": "#/$defs/relation" }
+    }
+  },
+  "additionalProperties": true,
+  "$defs": {
+    "statistics": {
+      "type": "object",
+      "required": ["totalRelations", "relationsByType"],
+      "properties": {
+        "totalRelations": { "type": "integer", "minimum": 0 },
+        "relationsByType": {
+          "type": "object",
+          "required": ["dal_web_credentials", "dal_android_credentials", "apple_webcredentials", "webauthn_related_origin"],
+          "properties": {
+            "dal_web_credentials": { "type": "integer", "minimum": 0 },
+            "dal_android_credentials": { "type": "integer", "minimum": 0 },
+            "apple_webcredentials": { "type": "integer", "minimum": 0 },
+            "webauthn_related_origin": { "type": "integer", "minimum": 0 }
+          },
+          "additionalProperties": false
+        }
+      },
+      "additionalProperties": false
+    },
+    "commonRelation": {
+      "type": "object",
+      "required": ["type", "source", "target", "evidenceUrl", "observedAt"],
+      "properties": {
+        "type": { "type": "string" },
+        "source": { "type": "string", "format": "uri" },
+        "target": { "type": "string" },
+        "evidenceUrl": { "type": "string", "format": "uri" },
+        "observedAt": { "type": "string", "format": "date-time" }
+      }
+    },
+    "relation": {
+      "oneOf": [
+        {
+          "type": "object",
+          "allOf": [
+            { "$ref": "#/$defs/commonRelation" },
+            {
+              "type": "object",
+              "required": ["reciprocal"],
+              "properties": {
+                "type": { "const": "dal_web_credentials" },
+                "reciprocal": { "type": "boolean" }
+              }
+            }
+          ],
+          "unevaluatedProperties": false
+        },
+        {
+          "type": "object",
+          "allOf": [
+            { "$ref": "#/$defs/commonRelation" },
+            {
+              "type": "object",
+              "required": ["fingerprints"],
+              "properties": {
+                "type": { "const": "dal_android_credentials" },
+                "fingerprints": {
+                  "type": "array",
+                  "minItems": 1,
+                  "uniqueItems": true,
+                  "items": { "type": "string", "pattern": "^[0-9A-Fa-f]{2}(?::[0-9A-Fa-f]{2}){31}$" }
+                }
+              }
+            }
+          ],
+          "unevaluatedProperties": false
+        },
+        {
+          "type": "object",
+          "allOf": [
+            { "$ref": "#/$defs/commonRelation" },
+            { "type": "object", "properties": { "type": { "const": "apple_webcredentials" } } }
+          ],
+          "unevaluatedProperties": false
+        },
+        {
+          "type": "object",
+          "allOf": [
+            { "$ref": "#/$defs/commonRelation" },
+            { "type": "object", "properties": { "type": { "const": "webauthn_related_origin" } } }
+          ],
+          "unevaluatedProperties": false
+        }
+      ]
+    }
+  }
+}

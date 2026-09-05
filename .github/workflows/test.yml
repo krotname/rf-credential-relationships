@@ -19,4 +19,6 @@ jobs:
           cache: npm
       - run: npm ci
       - run: npm test
+      - run: npm run build:api
+      - run: npm run validate:api
       - run: node collect-rf-equivalent-domains.mjs --help
