@@ -234,10 +234,10 @@ export async function buildStaticApi({
     };
     const manifestMeta = await writeBytes(path.join(versionDir, 'manifest.json'), jsonBytes(manifest));
     const actualLock = {
-      relationships: datasetMeta.sha256,
-      manifest: manifestMeta.sha256,
-      delta: deltaMeta.sha256,
-      types: Object.fromEntries(Object.entries(types).map(([slug, artifact]) => [slug, artifact.sha256])),
+      relationships: { sha256: datasetMeta.sha256 },
+      manifest: { sha256: manifestMeta.sha256 },
+      delta: { sha256: deltaMeta.sha256 },
+      types: Object.fromEntries(Object.entries(types).map(([slug, artifact]) => [slug, { sha256: artifact.sha256 }])),
     };
     artifactLocks[release.version] = actualLock;
     if (verifyArtifactLocks) assertArtifactLock(release, actualLock);

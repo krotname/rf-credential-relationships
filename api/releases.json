@@ -19,14 +19,14 @@
         }
       },
       "apiArtifacts": {
-        "relationships": "3ccad7da6cd1b1652e22e15c7057ac2eeb45d29b88ffc2e79fa5b6183b36f02e",
-        "manifest": "615133aa8b1bf5866837c1e3c570af036d50e44da92633ce9f5106c0c16ad4d5",
-        "delta": "c1906edd75775c58faca7883f102a54ef616a30bdaa7de1b92c3287c14c7e22f",
+        "relationships": { "sha256": "3ccad7da6cd1b1652e22e15c7057ac2eeb45d29b88ffc2e79fa5b6183b36f02e" },
+        "manifest": { "sha256": "615133aa8b1bf5866837c1e3c570af036d50e44da92633ce9f5106c0c16ad4d5" },
+        "delta": { "sha256": "c1906edd75775c58faca7883f102a54ef616a30bdaa7de1b92c3287c14c7e22f" },
         "types": {
-          "dal-web": "15003990916a022f778fadd1953ca469d4f7b6a8cf0d7909529c6761b1b90116",
-          "dal-android": "1817a3d78575400be210ea3da45a72b36897c52dc3f25afc92442fabd4f0da39",
-          "aasa-webcredentials": "0c9c0b872ca0974c844af126065e64d05db61fb1a2d018b65c844dd52ec72a4e",
-          "webauthn-related-origins": "81bd13583639daa997076df5b75e025bd4f67527ddfb9772153806188cef8394"
+          "dal-web": { "sha256": "15003990916a022f778fadd1953ca469d4f7b6a8cf0d7909529c6761b1b90116" },
+          "dal-android": { "sha256": "1817a3d78575400be210ea3da45a72b36897c52dc3f25afc92442fabd4f0da39" },
+          "aasa-webcredentials": { "sha256": "0c9c0b872ca0974c844af126065e64d05db61fb1a2d018b65c844dd52ec72a4e" },
+          "webauthn-related-origins": { "sha256": "81bd13583639daa997076df5b75e025bd4f67527ddfb9772153806188cef8394" }
         }
       },
       "releaseAssets": {

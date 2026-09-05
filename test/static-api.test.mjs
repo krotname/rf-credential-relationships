@@ -167,9 +167,9 @@ test('rejects unlocked artifacts and non-increasing release order', async (t) =>
   }), /отсутствует apiArtifacts lock/);
 
   first.config.apiArtifacts = {
-    relationships: '0'.repeat(64),
-    manifest: '0'.repeat(64),
-    delta: '0'.repeat(64),
+    relationships: { sha256: '0'.repeat(64) },
+    manifest: { sha256: '0'.repeat(64) },
+    delta: { sha256: '0'.repeat(64) },
     types: {},
   };
   await fs.writeFile(configPath, JSON.stringify({
