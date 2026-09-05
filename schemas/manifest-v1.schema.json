@@ -1,0 +1,72 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://krotname.github.io/rf-vaultwarden-domain-rules/api/schema/manifest-v1.schema.json",
+  "title": "RF credential relationships API release manifest",
+  "type": "object",
+  "required": ["apiVersion", "version", "publishedAt", "schema", "dataset", "types", "delta", "releaseAssets"],
+  "properties": {
+    "apiVersion": { "const": 1 },
+    "version": { "type": "string", "pattern": "^[0-9]+\\.[0-9]+\\.[0-9]+$" },
+    "publishedAt": { "type": "string", "format": "date-time" },
+    "schema": { "type": "string", "format": "uri" },
+    "dataset": { "$ref": "#/$defs/artifact" },
+    "types": {
+      "type": "object",
+      "minProperties": 4,
+      "additionalProperties": {
+        "type": "object",
+        "required": ["relationshipType", "url", "sha256", "count"],
+        "properties": {
+          "relationshipType": { "type": "string" },
+          "url": { "type": "string", "format": "uri" },
+          "sha256": { "$ref": "#/$defs/sha256" },
+          "count": { "type": "integer", "minimum": 0 }
+        },
+        "additionalProperties": false
+      }
+    },
+    "delta": {
+      "type": "object",
+      "required": ["url", "sha256", "count", "fromVersion", "bootstrap", "added", "removed"],
+      "properties": {
+        "url": { "type": "string", "format": "uri" },
+        "sha256": { "$ref": "#/$defs/sha256" },
+        "count": { "type": "integer", "minimum": 0 },
+        "fromVersion": { "type": ["string", "null"] },
+        "bootstrap": { "type": "boolean" },
+        "added": { "type": "integer", "minimum": 0 },
+        "removed": { "type": "integer", "minimum": 0 }
+      },
+      "additionalProperties": false
+    },
+    "releaseAssets": {
+      "type": "object",
+      "minProperties": 1,
+      "additionalProperties": {
+        "type": "object",
+        "required": ["url", "sha256"],
+        "properties": {
+          "url": { "type": "string", "format": "uri" },
+          "sha256": { "$ref": "#/$defs/sha256" },
+          "groups": { "type": "integer", "minimum": 0 },
+          "entries": { "type": "integer", "minimum": 0 }
+        },
+        "additionalProperties": false
+      }
+    }
+  },
+  "additionalProperties": false,
+  "$defs": {
+    "sha256": { "type": "string", "pattern": "^[0-9a-f]{64}$" },
+    "artifact": {
+      "type": "object",
+      "required": ["url", "sha256", "count"],
+      "properties": {
+        "url": { "type": "string", "format": "uri" },
+        "sha256": { "$ref": "#/$defs/sha256" },
+        "count": { "type": "integer", "minimum": 0 }
+      },
+      "additionalProperties": false
+    }
+  }
+}

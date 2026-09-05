@@ -1,0 +1,32 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://krotname.github.io/rf-vaultwarden-domain-rules/api/schema/delta-v1.schema.json",
+  "title": "RF credential relationships API delta",
+  "type": "object",
+  "required": ["schemaVersion", "fromVersion", "toVersion", "bootstrap", "baseline", "statistics", "added", "removed"],
+  "properties": {
+    "schemaVersion": { "const": 1 },
+    "fromVersion": { "type": ["string", "null"] },
+    "toVersion": { "type": "string", "pattern": "^[0-9]+\\.[0-9]+\\.[0-9]+$" },
+    "bootstrap": { "type": "boolean" },
+    "baseline": { "enum": ["empty", "previous-release"] },
+    "statistics": {
+      "type": "object",
+      "required": ["added", "removed"],
+      "properties": {
+        "added": { "type": "integer", "minimum": 0 },
+        "removed": { "type": "integer", "minimum": 0 }
+      },
+      "additionalProperties": false
+    },
+    "added": {
+      "type": "array",
+      "items": { "$ref": "https://krotname.github.io/rf-vaultwarden-domain-rules/api/schema/relationships-v1.schema.json#/$defs/relation" }
+    },
+    "removed": {
+      "type": "array",
+      "items": { "$ref": "https://krotname.github.io/rf-vaultwarden-domain-rules/api/schema/relationships-v1.schema.json#/$defs/relation" }
+    }
+  },
+  "additionalProperties": false
+}

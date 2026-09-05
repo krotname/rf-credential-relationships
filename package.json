@@ -6,10 +6,16 @@
   "description": "Collect evidence-backed credential relationships from Russian domain rankings.",
   "scripts": {
     "scan": "node collect-rf-equivalent-domains.mjs",
-    "test": "node --test"
+    "test": "node --test",
+    "build:api": "node scripts/build-static-api.mjs",
+    "validate:api": "node scripts/validate-static-api.mjs"
   },
   "dependencies": {
     "tldts": "7.4.11"
+  },
+  "devDependencies": {
+    "ajv": "8.20.0",
+    "ajv-formats": "3.0.1"
   },
   "engines": {
     "node": ">=20"

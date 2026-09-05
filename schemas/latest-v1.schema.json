@@ -1,0 +1,23 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://krotname.github.io/rf-vaultwarden-domain-rules/api/schema/latest-v1.schema.json",
+  "title": "RF credential relationships API latest pointer",
+  "type": "object",
+  "required": ["apiVersion", "version", "publishedAt", "manifest", "schema", "dataset", "types", "delta", "releaseAssets"],
+  "properties": {
+    "apiVersion": { "const": 1 },
+    "version": { "type": "string", "pattern": "^[0-9]+\\.[0-9]+\\.[0-9]+$" },
+    "publishedAt": { "type": "string", "format": "date-time" },
+    "manifest": { "type": "string", "format": "uri" },
+    "schema": { "type": "string", "format": "uri" },
+    "dataset": { "type": "string", "format": "uri" },
+    "types": {
+      "type": "object",
+      "minProperties": 4,
+      "additionalProperties": { "type": "string", "format": "uri" }
+    },
+    "delta": { "type": "string", "format": "uri" },
+    "releaseAssets": { "type": "object" }
+  },
+  "additionalProperties": false
+}
