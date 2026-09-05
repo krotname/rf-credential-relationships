@@ -3,7 +3,7 @@
   "version": "2.0.0",
   "private": true,
   "type": "module",
-  "description": "Collect evidence-backed credential relationships from Russian domain rankings.",
+  "description": "Evidence-backed relationships between Russian websites, mobile apps, and WebAuthn origins.",
   "scripts": {
     "scan": "node collect-rf-equivalent-domains.mjs",
     "test": "node --test",
