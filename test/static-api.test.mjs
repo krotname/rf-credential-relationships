@@ -11,6 +11,39 @@ function sha256(value) {
   return createHash('sha256').update(value).digest('hex');
 }
 
+for (const scenario of ['substituted relation', 'dataset statistics', 'filtered statistics']) {
+  test(`rejects inconsistent API: ${scenario}`, async (t) => {
+    const root = await fs.mkdtemp(path.join(os.tmpdir(), 'rf-static-consistency-'));
+    t.after(() => fs.rm(root, { recursive: true, force: true }));
+    const release = await fixtureRelease(root, '1.0.0', relations);
+    const configPath = path.join(root, 'releases.json');
+    await fs.writeFile(configPath, JSON.stringify({
+      schemaVersion: 1, baseUrl: 'https://example.test/project', releases: [release.config],
+    }));
+    const siteDir = path.join(root, 'site');
+    await buildStaticApi({
+      configPath, outDir: siteDir, sourceOverrides: new Map([['1.0.0', release.file]]),
+      verifyArtifactLocks: false,
+    });
+    const manifestPath = path.join(siteDir, 'api/v1.0.0/manifest.json');
+    const manifest = JSON.parse(await fs.readFile(manifestPath, 'utf8'));
+    const artifact = scenario === 'dataset statistics' ? manifest.dataset : manifest.types['dal-web'];
+    const artifactPath = path.join(siteDir, new URL(artifact.url).pathname.split('/project/')[1]);
+    const value = JSON.parse(await fs.readFile(artifactPath, 'utf8'));
+    if (scenario === 'substituted relation') value.relations[0].target = 'https://unrelated.example';
+    else {
+      value.statistics.relationsByType.dal_web_credentials -= 1;
+      value.statistics.relationsByType.dal_android_credentials += 1;
+    }
+    const bytes = Buffer.from(`${JSON.stringify(value, null, 2)}\n`);
+    await fs.writeFile(artifactPath, bytes);
+    artifact.sha256 = sha256(bytes);
+    await fs.writeFile(manifestPath, JSON.stringify(manifest));
+    await assert.rejects(validateStaticApi({ siteDir }), scenario === 'substituted relation'
+      ? /не совпадает с фильтром dataset/ : /Statistics .* не согласованы/);
+  });
+}
+
 function counts(relations) {
   const relationsByType = {
     dal_web_credentials: 0,
