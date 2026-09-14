@@ -7,7 +7,7 @@ import { verifyPreparedRelease } from './prepare-release.mjs';
 
 // После неоднозначного ответа сначала перечитываем сервер, затем повторяем запись.
 export async function ensureDraftAssets({ tag, names, releaseDir = '.local/release',
-  target = process.env.GITHUB_SHA, run = gh, wait = setTimeout }) {
+  target = process.env.GITHUB_SHA, notes, run = gh, wait = setTimeout }) {
   const read = () => {
     const release = JSON.parse(run(['api', `repos/${REPOSITORY}/releases?per_page=100`]))
       .find((entry) => entry.tag_name === tag);
@@ -31,9 +31,14 @@ export async function ensureDraftAssets({ tag, names, releaseDir = '.local/relea
     }
     return state;
   };
-  await ensure(Boolean, () => run(['release', 'create', tag, '--repo', REPOSITORY,
+  const draft = await ensure(Boolean, () => run(['release', 'create', tag, '--repo', REPOSITORY,
     '--target', target, '--draft', '--title', `${tag} — еженедельный снимок`,
     '--notes-file', '.local/release-notes.md']));
+  if (draft.assets.length === 0 && notes !== undefined) {
+    await ensure((release) => release?.target_commitish === target && release.body === notes,
+      () => run(['release', 'edit', tag, '--repo', REPOSITORY, '--target', target,
+        '--notes-file', '.local/release-notes.md']));
+  }
   // Индекс загружаем последним; существующие файлы никогда не перезаписываем.
   for (const name of [...names.filter((name) => name !== 'releases.json'), 'releases.json']) {
     await ensure((release) => release?.assets.some((asset) => asset.name === name),
@@ -45,7 +50,12 @@ export async function publishRelease() {
   const version = await verifyPreparedRelease();
   const tag = `v${version}`;
   const names = (await fs.readdir('.local/release')).sort();
-  await ensureDraftAssets({ tag, names });
+  const notes = await fs.readFile('.local/release-notes.md', 'utf8').catch((error) => {
+    if (error.code !== 'ENOENT') throw error;
+    // У полного возобновляемого черновика описание уже сохранено на GitHub.
+    return undefined;
+  });
+  await ensureDraftAssets({ tag, names, notes });
   // До публикации перечитываем реальные загруженные файлы, включая индекс.
   await fs.mkdir('.local/readback', { recursive: true });
   gh(['release', 'download', tag, '--repo', REPOSITORY, '--dir', '.local/readback']);
