@@ -53,6 +53,26 @@ test('upload retries are bounded and published or foreign assets block mutation'
   assert.equal(writes, 3);
 });
 
+test('an empty recovered draft receives the current scan notes and build commit', async () => {
+  const release = { tag_name: 'v2.0.3', draft: true, assets: [], target_commitish: 'old', body: 'old scan' };
+  const writes = [];
+  const run = (args) => {
+    if (args[0] === 'api') return JSON.stringify([release]);
+    writes.push(args[1]);
+    if (args[1] === 'edit') {
+      release.target_commitish = args[args.indexOf('--target') + 1];
+      release.body = 'fresh scan';
+      throw new Error('HTTP 500 after metadata update');
+    }
+    assert.equal(release.target_commitish, 'current');
+    assert.equal(release.body, 'fresh scan');
+    release.assets.push({ name: args[3].split(/[\\/]/).at(-1) });
+  };
+  await ensureDraftAssets({ tag: release.tag_name, names: ['releases.json'], target: 'current',
+    notes: 'fresh scan', run });
+  assert.deepEqual(writes, ['edit', 'upload']);
+});
+
 test('stale, invalid and future snapshots cannot be published on resume', () => {
   const now = new Date('2026-09-14T10:00:00Z');
   checkFreshness({ generatedAt: '2026-09-14T09:00:00Z' }, now);
