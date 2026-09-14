@@ -1,8 +1,65 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { promises as fs } from 'node:fs';
-import { nextVersion, validateIndex } from '../scripts/release-index.mjs';
-import { checkScan } from '../scripts/prepare-release.mjs';
+import { nextVersion, validateIndex, shouldResumeDraft } from '../scripts/release-index.mjs';
+import { checkScan, checkFreshness } from '../scripts/prepare-release.mjs';
+import { ensureDraftAssets } from '../scripts/publish-release.mjs';
+
+test('empty drafts trigger fresh collection while populated drafts resume validation', () => {
+  assert.equal(shouldResumeDraft(undefined), false);
+  assert.equal(shouldResumeDraft({ draft: true, assets: [] }), false);
+  assert.equal(shouldResumeDraft({ draft: true, assets: [{ name: 'releases.json' }] }), true);
+  assert.throws(() => shouldResumeDraft({ draft: false, assets: [] }), /опубликована/);
+});
+
+test('publication recovers committed HTTP errors without duplicate creation or uploads', async () => {
+  let release;
+  const mutations = [];
+  const run = (args) => {
+    if (args[0] === 'api') return JSON.stringify(release ? [release] : []);
+    mutations.push(args);
+    if (args[1] === 'create') {
+      release = { tag_name: 'v2.0.3', draft: true, assets: [] };
+      throw new Error('HTTP 500 after creation');
+    }
+    assert.equal(args[1], 'upload');
+    const name = args[3].split(/[\\/]/).at(-1);
+    assert.ok(!release.assets.some((asset) => asset.name === name));
+    release.assets.push({ name });
+    throw new Error('connection lost after upload');
+  };
+  await ensureDraftAssets({ tag: 'v2.0.3', names: ['releases.json', 'data.json'], run });
+  assert.deepEqual(mutations.map((args) => args[1]), ['create', 'upload', 'upload']);
+  assert.deepEqual(release.assets.map((asset) => asset.name), ['data.json', 'releases.json']);
+  await ensureDraftAssets({ tag: 'v2.0.3', names: ['releases.json', 'data.json'], run });
+  assert.equal(mutations.length, 3);
+});
+
+test('upload retries are bounded and published or foreign assets block mutation', async () => {
+  const release = { tag_name: 'v2.0.3', draft: true, assets: [] };
+  let writes = 0;
+  const run = (args) => {
+    if (args[0] === 'api') return JSON.stringify([release]);
+    writes++;
+    throw new Error('HTTP 503');
+  };
+  const options = { tag: release.tag_name, names: ['releases.json'], run, wait: async () => {} };
+  await assert.rejects(ensureDraftAssets(options), /503/);
+  assert.equal(writes, 3);
+  release.assets.push({ name: 'unexpected.txt' });
+  await assert.rejects(ensureDraftAssets(options), /Посторонние/);
+  release.draft = false;
+  await assert.rejects(ensureDraftAssets(options), /опубликован/);
+  assert.equal(writes, 3);
+});
+
+test('stale, invalid and future snapshots cannot be published on resume', () => {
+  const now = new Date('2026-09-14T10:00:00Z');
+  checkFreshness({ generatedAt: '2026-09-14T09:00:00Z' }, now);
+  for (const generatedAt of ['2026-09-13T08:47:00Z', '2026-09-15T00:00:00Z', 'invalid']) {
+    assert.throws(() => checkFreshness({ generatedAt }, now), /не свежий/);
+  }
+});
 
 test('increments patch versions and rejects unsafe versions', () => {
   assert.equal(nextVersion('2.0.9'), '2.0.10');
