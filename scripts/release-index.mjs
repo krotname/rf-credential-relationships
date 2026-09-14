@@ -20,6 +20,10 @@ export function nextVersion(version) {
   parts[2] += 1;
   return parts.join('.');
 }
+export function shouldResumeDraft(release) {
+  if (release && !release.draft) throw new Error('Следующая версия уже опубликована: проверьте latest');
+  return Boolean(release?.assets?.length);
+}
 export function validateIndex(baseline, index, tag) {
   if (index.schemaVersion !== baseline.schemaVersion || index.baseUrl !== baseline.baseUrl
       || !Array.isArray(index.releases) || index.releases.length < baseline.releases.length
@@ -75,12 +79,12 @@ if (process.argv[1] && import.meta.url === pathToFileURL(path.resolve(process.ar
   if (process.argv.includes('--prepare') && !result.skip) {
     const releases = JSON.parse(gh(['api', `repos/${REPOSITORY}/releases?per_page=100`]));
     const existing = releases.find((release) => release.tag_name === `v${result.version}`);
-    if (existing && !existing.draft) throw new Error('Следующая версия уже опубликована: проверьте latest');
-    if (existing) {
+    const resume = shouldResumeDraft(existing);
+    if (resume) {
       await fs.mkdir('.local/release', { recursive: true });
       gh(['release', 'download', `v${result.version}`, '--repo', REPOSITORY, '--dir', '.local/release']);
     }
-    if (process.env.GITHUB_OUTPUT) await fs.appendFile(process.env.GITHUB_OUTPUT, `resume=${Boolean(existing)}\n`);
+    if (process.env.GITHUB_OUTPUT) await fs.appendFile(process.env.GITHUB_OUTPUT, `resume=${resume}\n`);
   }
   process.stdout.write(`Latest: ${result.index.releases.at(-1).version}; skip: ${result.skip}\n`);
 }

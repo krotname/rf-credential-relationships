@@ -19,6 +19,11 @@ export function checkScan(previous, dataset, evidence) {
   }
 }
 
+export function checkFreshness(dataset, now = new Date()) {
+  const age = now - new Date(dataset.generatedAt);
+  if (!Number.isFinite(age) || age < -60000 || age > 24 * 60 * 60 * 1000) throw new Error('Снимок не свежий');
+}
+
 export async function prepareRelease({ configPath = '.local/releases.json', scanDir = 'out',
   releaseDir = '.local/release', siteDir = 'site', now = new Date() } = {}) {
   const config = JSON.parse(await fs.readFile(configPath, 'utf8'));
@@ -33,8 +38,7 @@ export async function prepareRelease({ configPath = '.local/releases.json', scan
   const evidenceBytes = await fs.readFile(path.join(scanDir, 'evidence.json'));
   const evidence = JSON.parse(evidenceBytes);
   checkScan(previous, dataset, evidence);
-  const age = now - new Date(dataset.generatedAt);
-  if (!Number.isFinite(age) || age < -60000 || age > 24 * 60 * 60 * 1000) throw new Error('Снимок не свежий');
+  checkFreshness(dataset, now);
   await fs.mkdir(releaseDir, { recursive: true });
   const payloads = {
     [`rf-credential-relationships-v${version}.json`]: bytes,
@@ -86,6 +90,13 @@ export async function verifyPreparedRelease(releaseDir = '.local/release') {
     path.join(releaseDir, new URL(latest.relationships.url).pathname.split('/').at(-1))]]);
   await buildStaticApi({ configPath: path.join(releaseDir, 'releases.json'), outDir: 'site-candidate', sourceOverrides });
   await validateStaticApi({ siteDir: 'site-candidate' });
+  const dataset = JSON.parse(await fs.readFile(sourceOverrides.get(latest.version), 'utf8'));
+  const evidence = JSON.parse(await fs.readFile(path.join(releaseDir,
+    new URL(latest.releaseAssets.evidence.url).pathname.split('/').at(-1)), 'utf8'));
+  const previous = JSON.parse(await fs.readFile(path.join('site-candidate',
+    `api/v${baseline.releases.at(-1).version}/relationships.json`), 'utf8'));
+  checkScan(previous, dataset, evidence);
+  checkFreshness(dataset);
   return latest.version;
 }
 
