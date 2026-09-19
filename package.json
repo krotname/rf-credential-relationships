@@ -12,7 +12,7 @@
   },
   "dependencies": {
     "cacheable-lookup": "7.0.0",
-    "p-limit": "6.2.0",
+    "p-limit": "7.3.2",
     "tldts": "7.4.13",
     "undici": "6.28.1"
   },
