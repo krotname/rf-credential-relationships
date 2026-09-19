@@ -14,7 +14,7 @@
     "cacheable-lookup": "7.0.0",
     "p-limit": "6.2.0",
     "tldts": "7.4.13",
-    "undici": "6.28.1"
+    "undici": "8.10.2"
   },
   "devDependencies": {
     "ajv": "8.20.0",
