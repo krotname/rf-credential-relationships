@@ -1,5 +1,7 @@
 # RF Credential Relationships
 
+[English](README.en.md)
+
 [![Test](https://github.com/krotname/rf-credential-relationships/actions/workflows/test.yml/badge.svg)](https://github.com/krotname/rf-credential-relationships/actions/workflows/test.yml)
 [![API](https://github.com/krotname/rf-credential-relationships/actions/workflows/pages.yml/badge.svg)](https://krotname.github.io/rf-credential-relationships/)
 [![Release](https://img.shields.io/github/v/release/krotname/rf-credential-relationships)](https://github.com/krotname/rf-credential-relationships/releases/latest)
