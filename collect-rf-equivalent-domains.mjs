@@ -8,6 +8,7 @@ import readline from 'node:readline';
 import { Readable } from 'node:stream';
 import { domainToASCII, fileURLToPath } from 'node:url';
 import { getDomain, parse as parseDomain } from 'tldts';
+import { fetch as undiciFetch } from 'undici';
 import { DestinationLimiter, DiscoveryBudget, describeFetchError } from './scripts/scan-limits.mjs';
 import { scanNetwork } from './scripts/scan-network.mjs';
 
@@ -214,6 +215,8 @@ export async function fetchWithTimeout(url, {
   limiter = destinationLimiter,
   dispatcher = scanNetwork.dispatcher,
   resolveUrl = scanNetwork.resolveUrl,
+  // Keep fetch and its dispatcher on the same Undici API across Node versions.
+  fetchImpl = undiciFetch,
 } = {}) {
   let remainingMs = timeoutMs;
   let currentUrl = url;
@@ -226,7 +229,7 @@ export async function fetchWithTimeout(url, {
       const started = performance.now();
       const signal = AbortSignal.timeout(Math.ceil(remainingMs));
       try {
-        const response = await fetch(currentUrl, {
+        const response = await fetchImpl(currentUrl, {
           headers: { 'user-agent': 'rf-credential-relationships/2.0', ...headers },
           redirect: 'manual',
           signal,
@@ -302,7 +305,7 @@ export async function readResponseBodyLimited(response, maxBytes) {
 
 async function majesticCandidates(limit, timeoutMs) {
   await scanNetwork.resolveUrl(MAJESTIC_URL);
-  const response = await fetch(MAJESTIC_URL, {
+  const response = await undiciFetch(MAJESTIC_URL, {
     dispatcher: scanNetwork.dispatcher,
     headers: { 'user-agent': 'rf-credential-relationships/2.0' },
     redirect: 'follow',

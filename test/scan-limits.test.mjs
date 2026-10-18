@@ -6,11 +6,10 @@ import { fetchWithTimeout } from '../collect-rf-equivalent-domains.mjs';
 
 test('redirect fan-in shares a destination slot through body consumption', async () => {
   const limiter = new DestinationLimiter({ intervalMs: 20 });
-  const originalFetch = globalThis.fetch;
   let active = 0;
   let peak = 0;
   const starts = [];
-  globalThis.fetch = async (url) => {
+  const fetchImpl = async (url) => {
     if (!url.includes('victim.ru')) return new Response(null, { status: 302, headers: { location: 'https://victim.ru/data' } });
     active += 1;
     peak = Math.max(peak, active);
@@ -24,15 +23,11 @@ test('redirect fan-in shares a destination slot through body consumption', async
       },
     }));
   };
-  try {
-    const results = await Promise.all(Array.from({ length: 5 }, (_, i) =>
-      fetchWithTimeout(`https://source${i}.ru/`, { redirect: 'follow-https', limiter, resolveUrl: async () => {} })));
-    assert.deepEqual(results, Array(5).fill('{}'));
-    assert.equal(peak, 1);
-    assert.ok(starts.slice(1).every((start, i) => start - starts[i] >= 20));
-  } finally {
-    globalThis.fetch = originalFetch;
-  }
+  const results = await Promise.all(Array.from({ length: 5 }, (_, i) =>
+    fetchWithTimeout(`https://source${i}.ru/`, { redirect: 'follow-https', limiter, resolveUrl: async () => {}, fetchImpl })));
+  assert.deepEqual(results, Array(5).fill('{}'));
+  assert.equal(peak, 1);
+  assert.ok(starts.slice(1).every((start, i) => start - starts[i] >= 20));
 });
 
 test('subdomains share start spacing; unrelated sites remain independent', async () => {
@@ -47,19 +42,14 @@ test('subdomains share start spacing; unrelated sites remain independent', async
 
 test('destination queueing does not spend the following request network timeout', async () => {
   const limiter = new DestinationLimiter({ intervalMs: 100 });
-  const originalFetch = globalThis.fetch;
-  globalThis.fetch = async (_url, { signal }) => {
+  const fetchImpl = async (_url, { signal }) => {
     signal.throwIfAborted();
     return new Response('{}');
   };
-  try {
-    assert.deepEqual(await Promise.all([
-      fetchWithTimeout('https://a.ru/aasa', { limiter, timeoutMs: 30, resolveUrl: async () => {} }),
-      fetchWithTimeout('https://a.ru/webauthn', { limiter, timeoutMs: 30, resolveUrl: async () => {} }),
-    ]), ['{}', '{}']);
-  } finally {
-    globalThis.fetch = originalFetch;
-  }
+  assert.deepEqual(await Promise.all([
+    fetchWithTimeout('https://a.ru/aasa', { limiter, timeoutMs: 30, resolveUrl: async () => {}, fetchImpl }),
+    fetchWithTimeout('https://a.ru/webauthn', { limiter, timeoutMs: 30, resolveUrl: async () => {}, fetchImpl }),
+  ]), ['{}', '{}']);
 });
 
 test('failed and expired queued requests release the slot without issuing traffic', async () => {
