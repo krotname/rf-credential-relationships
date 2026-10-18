@@ -45,15 +45,13 @@ test('cold DNS queries stay bounded without spending the HTTPS request timeout',
     resolve4: resolve,
     async resolve6() { await resolve(); throw notFound(); },
   }) });
-  const originalFetch = globalThis.fetch;
-  globalThis.fetch = async (_url, { signal }) => { signal.throwIfAborted(); return new Response('{}'); };
+  const fetchImpl = async (_url, { signal }) => { signal.throwIfAborted(); return new Response('{}'); };
   try {
     await Promise.all(Array.from({ length: 5 }, (_, i) => fetchWithTimeout(`https://dns${i}.ru`, {
-      dispatcher: network.dispatcher, resolveUrl: network.resolveUrl, timeoutMs: 5,
+      dispatcher: network.dispatcher, resolveUrl: network.resolveUrl, timeoutMs: 5, fetchImpl,
     })));
     assert.equal(peak, 2);
   } finally {
-    globalThis.fetch = originalFetch;
     await network.dispatcher.close();
   }
 });
