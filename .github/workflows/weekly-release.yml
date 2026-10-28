@@ -75,7 +75,7 @@ jobs:
             out/evidence.json
             out/vaultwarden-equivalent-domains.txt
           if-no-files-found: error
-          retention-days: 3
+          retention-days: 1
       - name: Prepare and validate immutable artifacts
         if: steps.state.outputs.skip != 'true' && steps.state.outputs.resume != 'true'
         run: node scripts/prepare-release.mjs
