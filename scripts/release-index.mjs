@@ -8,8 +8,8 @@ export const REPOSITORY = 'krotname/rf-credential-relationships';
 export const assetUrl = (version, name) => `https://github.com/${REPOSITORY}/releases/download/v${version}/${name}`;
 export const sha256 = (bytes) => createHash('sha256').update(bytes).digest('hex');
 export const jsonBytes = (value) => `${JSON.stringify(value, null, 2)}\n`;
-export function gh(args) {
-  return execFileSync('gh', args, { encoding: 'utf8', maxBuffer: 8 * 1024 * 1024 });
+export function gh(args, { encoding = 'utf8' } = {}) {
+  return execFileSync('gh', args, { encoding, maxBuffer: 32 * 1024 * 1024 });
 }
 export function nextVersion(version) {
   if (!/^\d+\.\d+\.\d+$/.test(version)) throw new Error('Некорректная версия');
@@ -20,73 +20,68 @@ export function nextVersion(version) {
   parts[2] += 1;
   return parts.join('.');
 }
-export function expectedDraftNames(version) {
-  if (!/^\d+\.\d+\.\d+$/.test(version)) throw new Error('Некорректная версия');
-  return [
-    `rf-credential-relationships-v${version}.json`,
-    `rf-scan-evidence-v${version}.json`,
-    `vaultwarden-equivalent-domains-v${version}.txt`,
-    'SHA256SUMS.txt',
-    'releases.json',
-  ];
+export function requiredReleaseAssetNames(version) {
+  nextVersion(version);
+  return [`rf-credential-relationships-v${version}.json`, `rf-scan-evidence-v${version}.json`,
+    `vaultwarden-equivalent-domains-v${version}.txt`, 'SHA256SUMS.txt', 'releases.json'];
 }
+
+// Проверка метаданных — только первый барьер. resume=true выдаётся после readback и полной валидации.
 export function shouldResumeDraft(release, version) {
   if (release && !release.draft) throw new Error('Следующая версия уже опубликована: проверьте latest');
   if (!release) return false;
-  let expectedVersion = version;
-  if (expectedVersion === undefined) {
-    const match = /^v(\d+\.\d+\.\d+)$/.exec(release.tag_name ?? '');
-    if (match) expectedVersion = match[1];
-    else return (release.assets ?? []).some((asset) => asset.name === 'releases.json');
-  }
-  const expected = expectedDraftNames(expectedVersion);
-  const names = new Set((release.assets ?? []).map((asset) => asset.name));
-  for (const name of names) {
-    if (!expected.includes(name)) throw new Error('Посторонние файлы в черновике');
-  }
-  return expected.every((name) => names.has(name));
+  const names = requiredReleaseAssetNames(version);
+  return release.tag_name === `v${version}` && release.assets?.length === names.length
+    && names.every((name) => release.assets.filter((asset) => asset.name === name
+      && asset.state === 'uploaded' && Number.isSafeInteger(asset.size) && asset.size > 0).length === 1);
 }
-export function selectDraftForTag(releases, tag) {
+
+export function selectDraftRelease(releases, tag) {
   const matches = releases.filter((release) => release.tag_name === tag);
-  if (matches.length === 0) return undefined;
-  if (matches.some((release) => !release.draft)) throw new Error('Следующая версия уже опубликована: проверьте latest');
-  if (matches.length > 1) throw new Error(`Найдено несколько черновиков ${tag}: требуется ручная очистка`);
-  return matches[0];
+  if (matches.some((release) => !release.draft)) throw new Error(`Выпуск ${tag} уже опубликован; перезапись запрещена`);
+  const populated = matches.filter((release) => release.assets.length > 0);
+  if (populated.length > 1) throw new Error(`Несколько непустых черновиков ${tag}: требуется проверка`);
+  return populated[0] ?? matches.sort((left, right) => left.id - right.id)[0];
 }
-export async function verifyDownloadedDraft(releaseDir, version) {
-  const expected = expectedDraftNames(version);
-  let localNames;
-  try {
-    localNames = await fs.readdir(releaseDir);
-  } catch (error) {
-    if (error.code === 'ENOENT') throw new Error(`Черновик v${version} загружен неполно: нет каталога ${releaseDir} (обрыв загрузки); повторите запуск`);
-    throw error;
-  }
-  const missing = expected.filter((name) => !localNames.includes(name));
-  if (missing.length > 0) throw new Error(`Черновик v${version} загружен неполно: нет ${missing.join(', ')} (обрыв загрузки или частичный черновик без releases.json)`);
-  const extra = localNames.filter((name) => !expected.includes(name));
-  if (extra.length > 0) throw new Error(`Посторонние файлы в загруженном черновике: ${extra.join(', ')}`);
-  let config;
-  try {
-    config = JSON.parse(await fs.readFile(path.join(releaseDir, 'releases.json'), 'utf8'));
-  } catch (error) {
-    if (error.code === 'ENOENT') throw new Error(`Черновик неполон: нет releases.json (частичный черновик без releases.json или обрыв загрузки); требуется повторная подготовка`);
-    throw error;
-  }
-  const latest = config.releases.at(-1);
-  if (!latest || latest.version !== version) throw new Error('Загруженный черновик не соответствует ожидаемой версии');
-  for (const asset of Object.values(latest.releaseAssets)) {
-    const name = new URL(asset.url).pathname.split('/').at(-1);
-    let bytes;
-    try {
-      bytes = await fs.readFile(path.join(releaseDir, name));
-    } catch (error) {
-      if (error.code === 'ENOENT') throw new Error(`Черновик v${version} загружен неполно: нет ${name} (обрыв загрузки)`);
-      throw error;
+
+export function readReleaseAsset(asset, run = gh) {
+  return Buffer.from(run(['api', `repos/${REPOSITORY}/releases/assets/${asset.id}`,
+    '-H', 'Accept: application/octet-stream'], { encoding: null }));
+}
+
+export async function downloadReleaseAssets(release, directory, { run = gh } = {}) {
+  await fs.mkdir(directory, { recursive: true });
+  const names = new Set();
+  for (const asset of release.assets) {
+    if (!asset.name || path.basename(asset.name) !== asset.name || asset.name.includes('\\')
+        || ['.', '..'].includes(asset.name) || names.has(asset.name)) throw new Error('Некорректное имя файла черновика');
+    names.add(asset.name);
+    const bytes = readReleaseAsset(asset, run);
+    if (asset.state !== 'uploaded' || bytes.length !== asset.size
+        || (asset.digest && asset.digest !== `sha256:${sha256(bytes)}`)) {
+      throw new Error(`Readback ${asset.name}: размер, состояние или SHA-256 не совпадает`);
     }
-    if (sha256(bytes) !== asset.sha256) throw new Error(`Черновик v${version} загружен с искажением: hash ${name} не совпадает (обрыв загрузки)`);
+    await fs.writeFile(path.join(directory, asset.name), bytes);
   }
-  return true;
+}
+
+export async function restoreDraftRelease({ release, version, releaseDir = '.local/release', run = gh,
+  verify = async (directory) => (await import('./prepare-release.mjs')).verifyPreparedRelease(directory) } = {}) {
+  // Не смешиваем скачанный пакет с остатками прежней попытки в workspace.
+  await fs.rm(releaseDir, { recursive: true, force: true });
+  if (!shouldResumeDraft(release, version)) {
+    if (release) process.stdout.write(`Draft v${version} incomplete; preparing a fresh snapshot\n`);
+    return false;
+  }
+  try {
+    await downloadReleaseAssets(release, releaseDir, { run });
+    await verify(releaseDir);
+    return true;
+  } catch (error) {
+    await fs.rm(releaseDir, { recursive: true, force: true });
+    process.stdout.write(`Draft v${version} cannot resume: ${error.message}; preparing a fresh snapshot\n`);
+    return false;
+  }
 }
 export function validateIndex(baseline, index, tag) {
   if (index.schemaVersion !== baseline.schemaVersion || index.baseUrl !== baseline.baseUrl
@@ -142,23 +137,8 @@ if (process.argv[1] && import.meta.url === pathToFileURL(path.resolve(process.ar
   const result = await syncReleaseIndex({ weekly: process.argv.includes('--weekly') });
   if (process.argv.includes('--prepare') && !result.skip) {
     const releases = JSON.parse(gh(['api', `repos/${REPOSITORY}/releases?per_page=100`]));
-    const tag = `v${result.version}`;
-    const existing = selectDraftForTag(releases, tag);
-    let resume = false;
-    if (shouldResumeDraft(existing, result.version)) {
-      await fs.rm('.local/release', { recursive: true, force: true });
-      await fs.mkdir('.local/release', { recursive: true });
-      gh(['release', 'download', tag, '--repo', REPOSITORY, '--dir', '.local/release']);
-      await verifyDownloadedDraft('.local/release', result.version);
-      resume = true;
-    } else if (existing?.assets?.length) {
-      gh(['release', 'delete', tag, '--repo', REPOSITORY, '--yes', '--cleanup-tag']);
-      await fs.rm('.local/release', { recursive: true, force: true });
-      resume = false;
-    } else {
-      await fs.rm('.local/release', { recursive: true, force: true });
-      resume = false;
-    }
+    const existing = selectDraftRelease(releases, `v${result.version}`);
+    const resume = await restoreDraftRelease({ release: existing, version: result.version });
     if (process.env.GITHUB_OUTPUT) await fs.appendFile(process.env.GITHUB_OUTPUT, `resume=${resume}\n`);
   }
   process.stdout.write(`Latest: ${result.index.releases.at(-1).version}; skip: ${result.skip}\n`);
