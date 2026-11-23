@@ -3,7 +3,7 @@ import path from 'node:path';
 import { pathToFileURL } from 'node:url';
 import { buildStaticApi } from './build-static-api.mjs';
 import { validateStaticApi } from './validate-static-api.mjs';
-import { assetUrl, jsonBytes, nextVersion, sha256, validateIndex } from './release-index.mjs';
+import { assetUrl, jsonBytes, nextVersion, requiredReleaseAssetNames, sha256, validateIndex } from './release-index.mjs';
 
 export function checkScan(previous, dataset, evidence) {
   if (dataset.ranking.domains < previous.ranking.domains * 0.9
@@ -39,6 +39,7 @@ export async function prepareRelease({ configPath = '.local/releases.json', scan
   const evidence = JSON.parse(evidenceBytes);
   checkScan(previous, dataset, evidence);
   checkFreshness(dataset, now);
+  await fs.rm(releaseDir, { recursive: true, force: true });
   await fs.mkdir(releaseDir, { recursive: true });
   const payloads = {
     [`rf-credential-relationships-v${version}.json`]: bytes,
@@ -76,27 +77,53 @@ export async function prepareRelease({ configPath = '.local/releases.json', scan
   return { version, releaseConfigPath };
 }
 
-export async function verifyPreparedRelease(releaseDir = '.local/release') {
-  const baseline = JSON.parse(await fs.readFile('.local/releases.json', 'utf8'));
+export async function verifyPreparedRelease(releaseDir = '.local/release', {
+  baselinePath = '.local/releases.json', siteDir = 'site-candidate', now = new Date(), sourceOverrides = new Map(),
+} = {}) {
+  const baseline = JSON.parse(await fs.readFile(baselinePath, 'utf8'));
+  const version = nextVersion(baseline.releases.at(-1).version);
+  const names = requiredReleaseAssetNames(version);
+  const actualNames = await fs.readdir(releaseDir);
+  if (actualNames.length !== names.length || names.some((name) => !actualNames.includes(name))) {
+    throw new Error(`Неполный или посторонний комплект файлов: требуются ${names.join(', ')}`);
+  }
   const config = JSON.parse(await fs.readFile(path.join(releaseDir, 'releases.json'), 'utf8'));
   const latest = config.releases.at(-1);
-  if (latest.version !== nextVersion(baseline.releases.at(-1).version)) throw new Error('Неожиданная версия черновика');
-  validateIndex(baseline, config, `v${latest.version}`);
-  for (const asset of Object.values(latest.releaseAssets)) {
-    const bytes = await fs.readFile(path.join(releaseDir, new URL(asset.url).pathname.split('/').at(-1)));
-    if (sha256(bytes) !== asset.sha256) throw new Error('Hash подготовленного артефакта не совпадает');
+  if (latest.version !== version || config.releases.length !== baseline.releases.length + 1) {
+    throw new Error('Неожиданная версия черновика');
   }
-  const sourceOverrides = new Map([[latest.version,
-    path.join(releaseDir, new URL(latest.relationships.url).pathname.split('/').at(-1))]]);
-  await buildStaticApi({ configPath: path.join(releaseDir, 'releases.json'), outDir: 'site-candidate', sourceOverrides });
-  await validateStaticApi({ siteDir: 'site-candidate' });
-  const dataset = JSON.parse(await fs.readFile(sourceOverrides.get(latest.version), 'utf8'));
+  validateIndex(baseline, config, `v${latest.version}`);
+  const keys = ['relationships', 'evidence', 'vaultwarden', 'checksums'];
+  if (Object.keys(latest.releaseAssets).length !== keys.length
+      || keys.some((key, index) => latest.releaseAssets[key]?.url !== assetUrl(version, names[index]))
+      || latest.relationships.url !== latest.releaseAssets.relationships.url
+      || latest.relationships.sha256 !== latest.releaseAssets.relationships.sha256) {
+    throw new Error('Индекс не описывает полный обязательный комплект артефактов');
+  }
+  for (const [index, key] of keys.entries()) {
+    const bytes = await fs.readFile(path.join(releaseDir, names[index]));
+    if (sha256(bytes) !== latest.releaseAssets[key].sha256) {
+      throw new Error(`Hash подготовленного артефакта ${names[index]} не совпадает`);
+    }
+  }
+  const checksums = await fs.readFile(path.join(releaseDir, 'SHA256SUMS.txt'), 'utf8');
+  const entries = checksums.trimEnd().split('\n').map((line) => /^([a-f0-9]{64})  (.+)$/.exec(line));
+  if (entries.length !== 3 || entries.some((entry) => !entry)
+      || names.slice(0, 3).some((name, index) => entries.filter((entry) =>
+        entry[2] === name && entry[1] === latest.releaseAssets[keys[index]].sha256).length !== 1)) {
+    throw new Error('SHA256SUMS.txt не соответствует полному комплекту данных');
+  }
+  const sources = new Map(sourceOverrides);
+  sources.set(latest.version, path.join(releaseDir, names[0]));
+  await buildStaticApi({ configPath: path.join(releaseDir, 'releases.json'), outDir: siteDir, sourceOverrides: sources });
+  await validateStaticApi({ siteDir });
+  const dataset = JSON.parse(await fs.readFile(sources.get(latest.version), 'utf8'));
   const evidence = JSON.parse(await fs.readFile(path.join(releaseDir,
     new URL(latest.releaseAssets.evidence.url).pathname.split('/').at(-1)), 'utf8'));
-  const previous = JSON.parse(await fs.readFile(path.join('site-candidate',
+  const previous = JSON.parse(await fs.readFile(path.join(siteDir,
     `api/v${baseline.releases.at(-1).version}/relationships.json`), 'utf8'));
   checkScan(previous, dataset, evidence);
-  checkFreshness(dataset);
+  checkFreshness(dataset, now);
   return latest.version;
 }
 
