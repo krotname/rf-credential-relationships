@@ -80,16 +80,23 @@ export async function prepareRelease({ configPath = '.local/releases.json', scan
 export async function verifyPreparedRelease(releaseDir = '.local/release', {
   baselinePath = '.local/releases.json', siteDir = 'site-candidate', now = new Date(), sourceOverrides = new Map(),
 } = {}) {
-  const baseline = JSON.parse(await fs.readFile(baselinePath, 'utf8'));
+  const baseline = JSON.parse(await fs.readFile(baselinePath, 'utf8').catch((error) => {
+    if (error.code === 'ENOENT') throw new Error(`Нет ${baselinePath}: сначала выполните Resolve release state`);
+    throw error;
+  }));
   const version = nextVersion(baseline.releases.at(-1).version);
   const names = requiredReleaseAssetNames(version);
-  const actualNames = await fs.readdir(releaseDir);
-  if (actualNames.length !== names.length || names.some((name) => !actualNames.includes(name))) {
-    throw new Error(`Неполный или посторонний комплект файлов: требуются ${names.join(', ')}`);
-  }
+  const actualNames = await fs.readdir(releaseDir).catch((error) => {
+    if (error.code === 'ENOENT') throw new Error(`Черновик неполон: нет каталога ${releaseDir}; требуется повторная подготовка`);
+    throw error;
+  });
+  const missing = names.filter((name) => !actualNames.includes(name));
+  const extra = actualNames.filter((name) => !names.includes(name));
+  if (missing.length) throw new Error(`Черновик неполон: нет ${missing.join(', ')}; требуется повторная подготовка`);
+  if (extra.length) throw new Error(`Посторонние файлы в черновике: ${extra.join(', ')}`);
   const config = JSON.parse(await fs.readFile(path.join(releaseDir, 'releases.json'), 'utf8'));
   const latest = config.releases.at(-1);
-  if (latest.version !== version || config.releases.length !== baseline.releases.length + 1) {
+  if (!latest || latest.version !== version || config.releases.length !== baseline.releases.length + 1) {
     throw new Error('Неожиданная версия черновика');
   }
   validateIndex(baseline, config, `v${latest.version}`);
