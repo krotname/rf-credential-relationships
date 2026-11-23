@@ -324,3 +324,80 @@ test('a draft published during retry backoff is reread before another upload', a
   assert.equal(api.writes.length, 1);
   assert.equal(api.writes[0].kind, 'upload');
 });
+
+test('successful create uses its returned ID while the release list is stale', async (t) => {
+  const fixture = await files(t);
+  const api = fakeGitHub();
+  let hiddenReads = 3;
+  const run = (args, options) => {
+    if (args.includes(`repos/${REPOSITORY}/releases?per_page=100`)
+        && api.releases.length && hiddenReads-- > 0) return '[]';
+    return api.run(args, options);
+  };
+  await ensureDraftAssets({ ...options(fixture, api), run });
+  assert.equal(api.releases.length, 1);
+  assert.equal(api.writes.filter((event) => event.kind === 'create').length, 1);
+  assert.ok(api.reads.includes(`repos/${REPOSITORY}/releases/${api.releases[0].id}`));
+  assert.equal(api.releases[0].assets.length, 5);
+});
+
+test('an ambiguous create with delayed visibility is not blindly repeated', async (t) => {
+  const fixture = await files(t);
+  const api = fakeGitHub();
+  let hideCreated = true;
+  api.afterMutation = (event) => {
+    if (event.kind === 'create') throw new Error('connection lost after committed create');
+  };
+  const run = (args, options) => {
+    if (hideCreated && args.includes(`repos/${REPOSITORY}/releases?per_page=100`)) return '[]';
+    return api.run(args, options);
+  };
+  await assert.rejects(ensureDraftAssets({ ...options(fixture, api), run }), /connection lost/);
+  assert.equal(api.writes.filter((event) => event.kind === 'create').length, 1);
+  hideCreated = false;
+  await ensureDraftAssets({ ...options(fixture, api), run });
+  assert.equal(api.releases.length, 1);
+  assert.equal(api.releases[0].assets.length, 5);
+  assert.equal(api.writes.filter((event) => event.kind === 'create').length, 1);
+});
+
+test('an empty duplicate that appears during upload is removed before completion', async (t) => {
+  const fixture = await files(t);
+  const api = fakeGitHub();
+  api.afterMutation = (event) => {
+    if (event.kind === 'upload' && event.name === 'releases.json') api.draft();
+  };
+  await ensureDraftAssets(options(fixture, api));
+  assert.equal(api.releases.length, 1);
+  assert.equal(api.releases[0].assets.length, 5);
+  assert.equal(api.writes.filter((event) => event.kind === 'deleteRelease').length, 1);
+});
+
+test('direct draft reads prevent stale asset lists from causing duplicate uploads', async (t) => {
+  const fixture = await files(t);
+  const api = fakeGitHub();
+  const release = api.draft();
+  const stale = JSON.stringify([release]);
+  const run = (args, options) => args.includes(`repos/${REPOSITORY}/releases?per_page=100`)
+    ? stale : api.run(args, options);
+  await ensureDraftAssets({ ...options(fixture, api), run });
+  assert.equal(api.writes.filter((event) => event.kind === 'upload').length, 5);
+  assert.equal(release.assets.length, 5);
+});
+
+test('duplicate cleanup checks its exact ID even when the list still calls it empty', async (t) => {
+  const fixture = await files(t);
+  for (const transition of ['published', 'populated']) {
+    const api = fakeGitHub();
+    const release = api.draft();
+    api.asset(release, fixture.names[0], fixture.payloads.get(fixture.names[0]));
+    const duplicate = api.draft();
+    const stale = JSON.stringify(api.releases);
+    if (transition === 'published') duplicate.draft = false;
+    else api.asset(duplicate, fixture.names[1], fixture.payloads.get(fixture.names[1]));
+    const run = (args, options) => args.includes(`repos/${REPOSITORY}/releases?per_page=100`)
+      ? stale : api.run(args, options);
+    await assert.rejects(ensureDraftAssets({ ...options(fixture, api), run }), /Удаление.*запрещено/);
+    assert.equal(api.writes.filter((event) => event.kind === 'deleteRelease').length, 0);
+  }
+});
