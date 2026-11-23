@@ -3,7 +3,7 @@ import path from 'node:path';
 import { pathToFileURL } from 'node:url';
 import { buildStaticApi } from './build-static-api.mjs';
 import { validateStaticApi } from './validate-static-api.mjs';
-import { assetUrl, jsonBytes, nextVersion, sha256, validateIndex } from './release-index.mjs';
+import { assetUrl, expectedDraftNames, jsonBytes, nextVersion, sha256, validateIndex } from './release-index.mjs';
 
 export function checkScan(previous, dataset, evidence) {
   if (dataset.ranking.domains < previous.ranking.domains * 0.9
@@ -77,13 +77,46 @@ export async function prepareRelease({ configPath = '.local/releases.json', scan
 }
 
 export async function verifyPreparedRelease(releaseDir = '.local/release') {
-  const baseline = JSON.parse(await fs.readFile('.local/releases.json', 'utf8'));
-  const config = JSON.parse(await fs.readFile(path.join(releaseDir, 'releases.json'), 'utf8'));
+  let baseline;
+  try {
+    baseline = JSON.parse(await fs.readFile('.local/releases.json', 'utf8'));
+  } catch (error) {
+    if (error.code === 'ENOENT') throw new Error('Нет .local/releases.json: сначала выполните Resolve release state');
+    throw error;
+  }
+  let config;
+  try {
+    config = JSON.parse(await fs.readFile(path.join(releaseDir, 'releases.json'), 'utf8'));
+  } catch (error) {
+    if (error.code === 'ENOENT') {
+      throw new Error(`Черновик неполон: нет ${path.join(releaseDir, 'releases.json')} (частичный черновик без releases.json или обрыв загрузки); требуется повторная подготовка, resume недопустим`);
+    }
+    throw error;
+  }
   const latest = config.releases.at(-1);
-  if (latest.version !== nextVersion(baseline.releases.at(-1).version)) throw new Error('Неожиданная версия черновика');
+  if (!latest || latest.version !== nextVersion(baseline.releases.at(-1).version)) throw new Error('Неожиданная версия черновика');
+  const expected = expectedDraftNames(latest.version);
+  let localNames;
+  try {
+    localNames = await fs.readdir(releaseDir);
+  } catch (error) {
+    if (error.code === 'ENOENT') throw new Error(`Черновик неполон: нет каталога ${releaseDir} (обрыв загрузки); требуется повторная подготовка`);
+    throw error;
+  }
+  const missing = expected.filter((name) => !localNames.includes(name));
+  if (missing.length > 0) throw new Error(`Черновик v${latest.version} неполон: нет ${missing.join(', ')} (частичный черновик или обрыв загрузки)`);
+  const extra = localNames.filter((name) => !expected.includes(name));
+  if (extra.length > 0) throw new Error(`Посторонние файлы в черновике: ${extra.join(', ')}`);
   validateIndex(baseline, config, `v${latest.version}`);
   for (const asset of Object.values(latest.releaseAssets)) {
-    const bytes = await fs.readFile(path.join(releaseDir, new URL(asset.url).pathname.split('/').at(-1)));
+    const name = new URL(asset.url).pathname.split('/').at(-1);
+    let bytes;
+    try {
+      bytes = await fs.readFile(path.join(releaseDir, name));
+    } catch (error) {
+      if (error.code === 'ENOENT') throw new Error(`Черновик v${latest.version} неполон: нет ${name} (обрыв загрузки)`);
+      throw error;
+    }
     if (sha256(bytes) !== asset.sha256) throw new Error('Hash подготовленного артефакта не совпадает');
   }
   const sourceOverrides = new Map([[latest.version,
