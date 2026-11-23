@@ -20,9 +20,73 @@ export function nextVersion(version) {
   parts[2] += 1;
   return parts.join('.');
 }
-export function shouldResumeDraft(release) {
+export function expectedDraftNames(version) {
+  if (!/^\d+\.\d+\.\d+$/.test(version)) throw new Error('Некорректная версия');
+  return [
+    `rf-credential-relationships-v${version}.json`,
+    `rf-scan-evidence-v${version}.json`,
+    `vaultwarden-equivalent-domains-v${version}.txt`,
+    'SHA256SUMS.txt',
+    'releases.json',
+  ];
+}
+export function shouldResumeDraft(release, version) {
   if (release && !release.draft) throw new Error('Следующая версия уже опубликована: проверьте latest');
-  return Boolean(release?.assets?.length);
+  if (!release) return false;
+  let expectedVersion = version;
+  if (expectedVersion === undefined) {
+    const match = /^v(\d+\.\d+\.\d+)$/.exec(release.tag_name ?? '');
+    if (match) expectedVersion = match[1];
+    else return (release.assets ?? []).some((asset) => asset.name === 'releases.json');
+  }
+  const expected = expectedDraftNames(expectedVersion);
+  const names = new Set((release.assets ?? []).map((asset) => asset.name));
+  for (const name of names) {
+    if (!expected.includes(name)) throw new Error('Посторонние файлы в черновике');
+  }
+  return expected.every((name) => names.has(name));
+}
+export function selectDraftForTag(releases, tag) {
+  const matches = releases.filter((release) => release.tag_name === tag);
+  if (matches.length === 0) return undefined;
+  if (matches.some((release) => !release.draft)) throw new Error('Следующая версия уже опубликована: проверьте latest');
+  if (matches.length > 1) throw new Error(`Найдено несколько черновиков ${tag}: требуется ручная очистка`);
+  return matches[0];
+}
+export async function verifyDownloadedDraft(releaseDir, version) {
+  const expected = expectedDraftNames(version);
+  let localNames;
+  try {
+    localNames = await fs.readdir(releaseDir);
+  } catch (error) {
+    if (error.code === 'ENOENT') throw new Error(`Черновик v${version} загружен неполно: нет каталога ${releaseDir} (обрыв загрузки); повторите запуск`);
+    throw error;
+  }
+  const missing = expected.filter((name) => !localNames.includes(name));
+  if (missing.length > 0) throw new Error(`Черновик v${version} загружен неполно: нет ${missing.join(', ')} (обрыв загрузки или частичный черновик без releases.json)`);
+  const extra = localNames.filter((name) => !expected.includes(name));
+  if (extra.length > 0) throw new Error(`Посторонние файлы в загруженном черновике: ${extra.join(', ')}`);
+  let config;
+  try {
+    config = JSON.parse(await fs.readFile(path.join(releaseDir, 'releases.json'), 'utf8'));
+  } catch (error) {
+    if (error.code === 'ENOENT') throw new Error(`Черновик неполон: нет releases.json (частичный черновик без releases.json или обрыв загрузки); требуется повторная подготовка`);
+    throw error;
+  }
+  const latest = config.releases.at(-1);
+  if (!latest || latest.version !== version) throw new Error('Загруженный черновик не соответствует ожидаемой версии');
+  for (const asset of Object.values(latest.releaseAssets)) {
+    const name = new URL(asset.url).pathname.split('/').at(-1);
+    let bytes;
+    try {
+      bytes = await fs.readFile(path.join(releaseDir, name));
+    } catch (error) {
+      if (error.code === 'ENOENT') throw new Error(`Черновик v${version} загружен неполно: нет ${name} (обрыв загрузки)`);
+      throw error;
+    }
+    if (sha256(bytes) !== asset.sha256) throw new Error(`Черновик v${version} загружен с искажением: hash ${name} не совпадает (обрыв загрузки)`);
+  }
+  return true;
 }
 export function validateIndex(baseline, index, tag) {
   if (index.schemaVersion !== baseline.schemaVersion || index.baseUrl !== baseline.baseUrl
@@ -78,11 +142,22 @@ if (process.argv[1] && import.meta.url === pathToFileURL(path.resolve(process.ar
   const result = await syncReleaseIndex({ weekly: process.argv.includes('--weekly') });
   if (process.argv.includes('--prepare') && !result.skip) {
     const releases = JSON.parse(gh(['api', `repos/${REPOSITORY}/releases?per_page=100`]));
-    const existing = releases.find((release) => release.tag_name === `v${result.version}`);
-    const resume = shouldResumeDraft(existing);
-    if (resume) {
+    const tag = `v${result.version}`;
+    const existing = selectDraftForTag(releases, tag);
+    let resume = false;
+    if (shouldResumeDraft(existing, result.version)) {
+      await fs.rm('.local/release', { recursive: true, force: true });
       await fs.mkdir('.local/release', { recursive: true });
-      gh(['release', 'download', `v${result.version}`, '--repo', REPOSITORY, '--dir', '.local/release']);
+      gh(['release', 'download', tag, '--repo', REPOSITORY, '--dir', '.local/release']);
+      await verifyDownloadedDraft('.local/release', result.version);
+      resume = true;
+    } else if (existing?.assets?.length) {
+      gh(['release', 'delete', tag, '--repo', REPOSITORY, '--yes', '--cleanup-tag']);
+      await fs.rm('.local/release', { recursive: true, force: true });
+      resume = false;
+    } else {
+      await fs.rm('.local/release', { recursive: true, force: true });
+      resume = false;
     }
     if (process.env.GITHUB_OUTPUT) await fs.appendFile(process.env.GITHUB_OUTPUT, `resume=${resume}\n`);
   }

@@ -83,7 +83,9 @@ jobs:
         if: steps.state.outputs.skip != 'true'
         env:
           GH_TOKEN: ${{ github.token }}
-        run: node scripts/publish-release.mjs
+        run: |
+          node scripts/prepare-release.mjs --verify
+          node scripts/publish-release.mjs
 
   deploy:
     needs: release

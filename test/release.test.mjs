@@ -1,15 +1,74 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { promises as fs } from 'node:fs';
-import { nextVersion, validateIndex, shouldResumeDraft } from '../scripts/release-index.mjs';
-import { checkScan, checkFreshness } from '../scripts/prepare-release.mjs';
+import os from 'node:os';
+import path from 'node:path';
+import { nextVersion, validateIndex, shouldResumeDraft, expectedDraftNames, selectDraftForTag, verifyDownloadedDraft } from '../scripts/release-index.mjs';
+import { checkScan, checkFreshness, verifyPreparedRelease } from '../scripts/prepare-release.mjs';
 import { ensureDraftAssets } from '../scripts/publish-release.mjs';
 
-test('empty drafts trigger fresh collection while populated drafts resume validation', () => {
-  assert.equal(shouldResumeDraft(undefined), false);
-  assert.equal(shouldResumeDraft({ draft: true, assets: [] }), false);
-  assert.equal(shouldResumeDraft({ draft: true, assets: [{ name: 'releases.json' }] }), true);
-  assert.throws(() => shouldResumeDraft({ draft: false, assets: [] }), /опубликована/);
+test('empty drafts trigger fresh collection while only complete drafts resume', () => {
+  assert.equal(shouldResumeDraft(undefined, '2.0.4'), false);
+  assert.equal(shouldResumeDraft({ draft: true, tag_name: 'v2.0.4', assets: [] }, '2.0.4'), false);
+  const full = expectedDraftNames('2.0.4').map((name) => ({ name }));
+  assert.equal(shouldResumeDraft({ draft: true, tag_name: 'v2.0.4', assets: full }, '2.0.4'), true);
+  assert.throws(() => shouldResumeDraft({ draft: false, tag_name: 'v2.0.4', assets: [] }, '2.0.4'), /опубликована/);
+});
+
+test('incomplete drafts without releases.json never resume', () => {
+  const version = '2.0.4';
+  const expected = expectedDraftNames(version);
+  assert.ok(expected.includes('releases.json'));
+  const withoutIndex = expected.filter((name) => name !== 'releases.json').map((name) => ({ name }));
+  assert.equal(shouldResumeDraft({ draft: true, tag_name: `v${version}`, assets: withoutIndex }, version), false);
+  const onlyIndex = [{ name: 'releases.json' }];
+  assert.equal(shouldResumeDraft({ draft: true, tag_name: `v${version}`, assets: onlyIndex }, version), false);
+  const partial = expected.slice(0, 2).map((name) => ({ name }));
+  assert.equal(shouldResumeDraft({ draft: true, tag_name: `v${version}`, assets: partial }, version), false);
+  assert.throws(
+    () => shouldResumeDraft({ draft: true, tag_name: `v${version}`, assets: [...expected.map((name) => ({ name })), { name: 'unexpected.txt' }] }, version),
+    /Посторонние/,
+  );
+});
+
+test('duplicate drafts block resume until manual cleanup', () => {
+  const tag = 'v2.0.4';
+  assert.equal(selectDraftForTag([], tag), undefined);
+  const single = { tag_name: tag, draft: true, assets: [] };
+  assert.equal(selectDraftForTag([single], tag), single);
+  const published = { tag_name: tag, draft: false, assets: [] };
+  assert.throws(() => selectDraftForTag([published], tag), /опубликована/);
+  assert.throws(
+    () => selectDraftForTag([single, { tag_name: tag, draft: true, assets: [] }], tag),
+    /несколько черновиков/,
+  );
+});
+
+test('interrupted download is detected instead of ENOENT on releases.json', async () => {
+  const version = '9.9.9';
+  const dir = await fs.mkdtemp(path.join(os.tmpdir(), 'rf-draft-'));
+  try {
+    await assert.rejects(verifyDownloadedDraft(dir, version), /неполно|нет releases\.json|загружен неполно/);
+    await fs.writeFile(path.join(dir, 'releases.json'), '{"releases":[]}\n');
+    await assert.rejects(verifyDownloadedDraft(dir, version), /неполно|нет /);
+  } finally {
+    await fs.rm(dir, { recursive: true, force: true });
+  }
+});
+
+test('verifyPreparedRelease reports incomplete draft instead of raw ENOENT', async () => {
+  const tmp = await fs.mkdtemp(path.join(os.tmpdir(), 'rf-verify-'));
+  const cwd = process.cwd();
+  try {
+    process.chdir(tmp);
+    await fs.mkdir('.local', { recursive: true });
+    await fs.writeFile('.local/releases.json', '{"releases":[{"version":"1.0.0"}]}\n');
+    await fs.mkdir('.local/release', { recursive: true });
+    await assert.rejects(verifyPreparedRelease('.local/release'), /Черновик неполон|нет .*releases\.json/);
+  } finally {
+    process.chdir(cwd);
+    await fs.rm(tmp, { recursive: true, force: true });
+  }
 });
 
 test('publication recovers committed HTTP errors without duplicate creation or uploads', async () => {
@@ -51,6 +110,18 @@ test('upload retries are bounded and published or foreign assets block mutation'
   release.draft = false;
   await assert.rejects(ensureDraftAssets(options), /опубликован/);
   assert.equal(writes, 3);
+});
+
+test('duplicate remote drafts block mutation instead of ambiguous upload', async () => {
+  const releases = [
+    { tag_name: 'v2.0.3', draft: true, assets: [] },
+    { tag_name: 'v2.0.3', draft: true, assets: [] },
+  ];
+  const run = (args) => {
+    if (args[0] === 'api') return JSON.stringify(releases);
+    throw new Error('should not mutate with duplicates');
+  };
+  await assert.rejects(ensureDraftAssets({ tag: 'v2.0.3', names: ['releases.json'], run }), /несколько черновиков/);
 });
 
 test('an empty recovered draft receives the current scan notes and build commit', async () => {
